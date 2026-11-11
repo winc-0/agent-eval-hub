@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.egg-info/
+evalhub.db
+reports/
+suites/*/drafts/
+traces.otel.jsonl
