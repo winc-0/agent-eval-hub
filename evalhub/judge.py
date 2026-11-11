@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -56,6 +57,7 @@ class CascadeResult:
     model: str = ""
     verdicts: list[JudgeVerdict] = field(default_factory=list)
     cached: bool = False
+    error: str = ""       # 裁判自身的故障（网络/限流），不是被测模型的问题
 
     @property
     def cost_usd(self) -> float:
@@ -222,29 +224,68 @@ def _agreement(pred: list[str], gold: list[str]) -> dict:
     tn = sum(p == "fail" and g == "fail" for p, g in zip(pred, gold))
     fp = sum(p == "pass" and g == "fail" for p, g in zip(pred, gold))
     fn = sum(p != "pass" and g == "pass" for p, g in zip(pred, gold))
+    decided = [(p, g) for p, g in zip(pred, gold) if p in ("pass", "fail")]
     return {"n": n, "agreement": (tp + tn) / n if n else 0.0,
+            # 裁判故障（拿不准）会被保守地算成不一致，所以另给一个"只看已判定样本"的一致率
+            "agreement_decided": sum(p == g for p, g in decided) / len(decided) if decided else 0.0,
             "kappa": cohen_kappa([p if p == "pass" else "fail" for p in pred], gold),
             "false_pass": fp, "false_fail": fn, "unsure": sum(p == "unsure" for p in pred)}
 
 
-async def calibrate(judge: CascadeJudge, rows: list[dict]) -> dict:
-    """用人工标注集校准裁判。rows: {id, item:{...}, answer, conversation?, tool_results?, human: pass|fail}"""
+async def calibrate(judge: CascadeJudge, rows: list[dict], concurrency: int = 4) -> dict:
+    """用人工标注集校准裁判。rows: {id, item:{...}, answer, conversation?, tool_results?, human: pass|fail}
+
+    每条标注相互独立，并发判；并发的意义主要在真实模型上——单条调用 10 秒以上，
+    24 条串行要十几分钟，串行校准实际上没人会跑第二遍。
+    """
     reqs = [JudgeRequest(RubricItem(**r["item"]), r["answer"], r.get("conversation", ""),
                          r.get("tool_results", "")) for r in rows]
     gold = [r["human"] for r in rows]
     report: dict = {"n": len(rows), "tiers": [], "disagreements": []}
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(backend: JudgeBackend, req: JudgeRequest) -> tuple[JudgeVerdict, str]:
+        """判一条；网络类故障退避重试两次。返回 (判定, 故障类别)，两者不能混为一谈：
+        “模型说拿不准”和“根本没调到模型”在报告里必须分开。"""
+        for attempt in range(3):
+            async with sem:
+                try:
+                    return await backend.judge(req), ""
+                except InfraError as e:   # 裁判调不通算裁判故障，不算被测模型答错
+                    if not e.retryable or attempt == 2:
+                        return JudgeVerdict("unsure", 0.0, f"裁判调用失败：{e.error_class}",
+                                            backend.model), e.error_class
+            await asyncio.sleep(1.5 * 2 ** attempt)
+        raise AssertionError("unreachable")
+
+    tier_errors: dict[str, list] = {}
     for tier, backend in enumerate(judge.tiers, start=1):
-        preds, cost = [], 0.0
-        for req in reqs:
-            try:
-                v = await backend.judge(req)
-            except InfraError as e:
-                v = JudgeVerdict("unsure", 0.0, f"裁判调用失败：{e.error_class}", backend.model)
-            preds.append(v.verdict)
-            cost += v.cost_usd
-        report["tiers"].append({"tier": tier, "model": backend.model, "cost_usd": cost, **_agreement(preds, gold)})
+        pairs = await asyncio.gather(*(one(backend, req) for req in reqs))
+        verdicts = [v for v, _ in pairs]
+        failed = [rows[i].get("id", i) for i, (_, err) in enumerate(pairs) if err]
+        if failed:
+            tier_errors[f"第 {tier} 级 {backend.model}"] = failed
+        report["tiers"].append({"tier": tier, "model": backend.model,
+                                "cost_usd": sum(v.cost_usd for v in verdicts),
+                                "errors": len(failed),
+                                **_agreement([v.verdict for v in verdicts], gold)})
+    report["tier_errors"] = tier_errors
     fresh = CascadeJudge(judge.tiers, judge.threshold, judge.votes)
-    results = [await fresh.judge(req) for req in reqs]
+
+    async def decided(req: JudgeRequest) -> CascadeResult:
+        """判一条；网络类故障退避重试两次，仍失败就记为裁判故障，不能悄悄当成判错。"""
+        for attempt in range(3):
+            async with sem:
+                try:
+                    return await fresh.judge(req)
+                except InfraError as e:
+                    if not e.retryable or attempt == 2:
+                        return CascadeResult("unsure", len(judge.tiers), False, True,
+                                             f"裁判调用失败：{e.error_class}", error=e.error_class)
+            await asyncio.sleep(1.5 * 2 ** attempt)
+        raise AssertionError("unreachable")
+
+    results = await asyncio.gather(*(decided(req) for req in reqs))
     preds = [r.verdict for r in results]
     report["cascade"] = {
         **_agreement(preds, gold),
@@ -253,6 +294,7 @@ async def calibrate(judge: CascadeJudge, rows: list[dict]) -> dict:
         "cost_usd": sum(r.cost_usd for r in results),
         "cost_if_all_strong": report["tiers"][-1]["cost_usd"],
     }
+    report["judge_errors"] = [rows[i].get("id", i) for i, r in enumerate(results) if r.error]
     report["disagreements"] = [
         {"id": row.get("id", i), "human": g, "judge": p, "reason": r.reason, "answer": row["answer"][:80]}
         for i, (row, g, p, r) in enumerate(zip(rows, gold, preds, results)) if p != g]

@@ -185,17 +185,29 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     if judge is None:
         print("需要指定裁判（--judge）")
         return 2
-    rep = asyncio.run(calibrate(judge, rows))
+    rep = asyncio.run(calibrate(judge, rows, args.concurrency))
     print(f"人工标注 {rep['n']} 条")
     for t in rep["tiers"]:
+        bad = f"  故障 {t['errors']}" if t["errors"] else ""
         print(f"  第 {t['tier']} 级 {t['model']:<20} 一致率 {_pct(t['agreement'])}  kappa {t['kappa']:.2f}  "
-              f"误放 {t['false_pass']}  误杀 {t['false_fail']}  拿不准 {t['unsure']}  成本 ${t['cost_usd']:.4f}")
+              f"误放 {t['false_pass']}  误杀 {t['false_fail']}  拿不准 {t['unsure']}  成本 ${t['cost_usd']:.4f}{bad}")
     c = rep["cascade"]
     print(f"  分级整体                     一致率 {_pct(c['agreement'])}  kappa {c['kappa']:.2f}  "
           f"升级率 {_pct(c['escalation_rate'])}  转人工 {_pct(c['needs_human_rate'])}  "
           f"成本 ${c['cost_usd']:.4f}（全用强模型 ${c['cost_if_all_strong']:.4f}）")
+    if c["unsure"]:   # 拿不准的条目会被保守算成不一致，所以另给一个只看已判定的口径
+        print(f"  其中 {c['unsure']} 条裁判没给出判定，只看已判定的 {c['n'] - c['unsure']} 条："
+              f"一致率 {_pct(c['agreement_decided'])}")
     for d in rep["disagreements"]:
         print(f"  ≠ {d['id']}: 人工 {d['human']} / 裁判 {d['judge']} —— {d['reason']} ｜ {d['answer']}")
+    for name, ids in rep["tier_errors"].items():   # 某一级整体调不通时，它的统计不能当真
+        print(f"注意：{name} 有 {len(ids)} 条调用失败，该级的一致率不可信：{', '.join(map(str, ids))}")
+    if rep["judge_errors"]:
+        print(f"裁判故障 {len(rep['judge_errors'])} 条：{', '.join(map(str, rep['judge_errors']))}")
+        print("结论：本次校准不完整，先修接口再下判断")
+        return 2
+    if c["cost_usd"] == 0.0:
+        print("（成本记 0：这两级模型没有登记价格，只影响金额展示，不影响一致率）")
     ok = c["agreement"] >= args.min_agreement
     print(f"结论：一致率{'达到' if ok else '低于'} {args.min_agreement:.0%} 的要求" +
           ("" if ok else "，裁判提示词需要继续迭代，暂不能用它的分数做门禁"))
@@ -283,6 +295,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("calibrate", help="校准裁判")
     sp.add_argument("suite"); sp.add_argument("--labels", default=None)
     sp.add_argument("--min-agreement", type=float, default=0.9)
+    sp.add_argument("--concurrency", type=int, default=4, help="并发判几条标注（真实模型下单条要十几秒）")
     judge_opts(sp, "mock"); sp.set_defaults(func=cmd_calibrate)
 
     sp = sub.add_parser("reviews", help="待人工复核队列"); sp.add_argument("--run", default=None)
