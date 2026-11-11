@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from . import badcase as bc
 from .agent import make_agent
+from .envvars import MissingCredential
 from .judge import make_judge
 from .report import build_report, render_html
 from .scheduler import RunConfig, run_suite
@@ -70,6 +71,8 @@ def create_app(db_path: str = "evalhub.db", suites_dir: str = "suites") -> FastA
         try:
             suite = Suite.load(root)
             agent, judge = make_agent(req.agent), make_judge(req.judge)
+        except MissingCredential as e:
+            raise HTTPException(400, str(e))
         except Exception as e:
             raise HTTPException(400, f"{type(e).__name__}: {e}")
         run_id = new_run_id()
