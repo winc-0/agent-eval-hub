@@ -94,10 +94,10 @@ class EvaluatorTests(unittest.TestCase):
         self.assertIn("faithfulness.fabricated_entity", tags)
 
     def test_grounding_respects_time_order(self):
-        # 第 1 轮就说出了 O1001，但用户第 2 轮才提到它
+        # 第 1 轮就断言了 O1001，但用户第 2 轮才提到它（“例如 O1001”这种举例不算，见下一个测试）
         scores, _, _ = self.grade(
             "refund_missing_order_id",
-            ReferenceTurn(answer="请提供订单号，例如 O1001。"),
+            ReferenceTurn(answer="您是要退订单 O1001 吧？"),
             ReferenceTurn(tool_calls=[call("check_refund_eligibility", order_id="O1001"),
                                       call("create_refund", order_id="O1001", amount=299)],
                           answer="已为您办理订单 O1001 的退款，金额 299 元。"))
@@ -214,6 +214,110 @@ class _FakeProvider:
     async def complete(self, system, user, json_schema=None):
         self.prompts.append(user)
         return Completion(self.text, LLMUsage(100, 20), 50.0, self.model, self.stop_reason)
+
+
+class EnvVarsTests(unittest.TestCase):
+    """环境变量读取：进程优先，缺失时回退到系统保存的值；都没有时给出中文说明。"""
+
+    def setUp(self):
+        from unittest import mock
+
+        self.mock = mock
+        env = mock.patch.dict("os.environ", {}, clear=False)
+        env.start()
+        self.addCleanup(env.stop)
+        for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "DASHSCOPE_API_KEY", "DASHSCOPE_BASE_URL"):
+            import os
+            os.environ.pop(name, None)
+
+    def registry(self, values: dict):
+        p = self.mock.patch("evalhub.envvars._registry_value", side_effect=lambda n: values.get(n))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_process_env_wins_over_saved_value(self):
+        import os
+
+        from evalhub.envvars import read_env
+        self.registry({"OPENAI_API_KEY": "from-registry"})
+        os.environ["OPENAI_API_KEY"] = "  from-terminal  "
+        self.assertEqual(read_env("OPENAI_API_KEY"), "from-terminal")
+
+    def test_falls_back_to_saved_value_when_terminal_lacks_it(self):
+        import os
+
+        from evalhub.envvars import read_env
+        self.registry({"OPENAI_API_KEY": "from-registry"})
+        os.environ["OPENAI_API_KEY"] = "   "   # 空白值等同于没设置
+        self.assertEqual(read_env("OPENAI_API_KEY"), "from-registry")
+
+    def test_missing_value_gives_readable_error(self):
+        from evalhub.envvars import MissingCredential, require_env
+        self.registry({})
+        with self.assertRaises(MissingCredential) as ctx:
+            require_env("OPENAI_API_KEY", "DASHSCOPE_API_KEY", hint="需要 Key。")
+        self.assertIn("OPENAI_API_KEY 或 DASHSCOPE_API_KEY", str(ctx.exception))
+        self.assertIn("环境变量", str(ctx.exception))
+
+    @unittest.skipUnless(__import__("sys").platform == "win32", "只在 Windows 上读注册表")
+    def test_real_registry_lookup_of_unknown_name_is_none(self):
+        from evalhub.envvars import _registry_value
+        self.assertIsNone(_registry_value("EVALHUB_TEST_SURELY_NOT_SET_7731"))
+
+    def test_openai_provider_uses_saved_values(self):
+        try:
+            from evalhub.llm.openai_provider import OpenAICompatProvider
+        except ImportError:
+            self.skipTest("未安装 openai SDK")
+        self.registry({"OPENAI_API_KEY": "sk-saved", "OPENAI_BASE_URL": "https://example.test/v1"})
+        p = OpenAICompatProvider("some-model")
+        self.assertEqual(p.client.api_key, "sk-saved")
+        self.assertEqual(str(p.client.base_url).rstrip("/"), "https://example.test/v1")
+
+    def test_openai_provider_accepts_dashscope_names(self):
+        try:
+            from evalhub.llm.openai_provider import OpenAICompatProvider
+        except ImportError:
+            self.skipTest("未安装 openai SDK")
+        self.registry({"DASHSCOPE_API_KEY": "sk-ds", "DASHSCOPE_BASE_URL": "https://ds.example/compatible-mode/v1"})
+        p = OpenAICompatProvider("some-model")
+        self.assertEqual(p.client.api_key, "sk-ds")
+        self.assertEqual(str(p.client.base_url).rstrip("/"), "https://ds.example/compatible-mode/v1")
+
+    def test_openai_names_take_priority_over_dashscope_names(self):
+        try:
+            from evalhub.llm.openai_provider import OpenAICompatProvider
+        except ImportError:
+            self.skipTest("未安装 openai SDK")
+        self.registry({"OPENAI_API_KEY": "sk-oa", "DASHSCOPE_API_KEY": "sk-ds",
+                       "OPENAI_BASE_URL": "https://oa.example/v1", "DASHSCOPE_BASE_URL": "https://ds.example/v1"})
+        p = OpenAICompatProvider("some-model")
+        self.assertEqual(p.client.api_key, "sk-oa")
+        self.assertIn("oa.example", str(p.client.base_url))
+
+    def test_openai_provider_refuses_to_guess_the_endpoint(self):
+        from evalhub.envvars import MissingCredential
+        try:
+            from evalhub.llm.openai_provider import OpenAICompatProvider
+        except ImportError:
+            self.skipTest("未安装 openai SDK")
+        self.registry({"OPENAI_API_KEY": "sk-saved"})   # 有 Key 没地址：不能默认发往 api.openai.com
+        with self.assertRaises(MissingCredential) as ctx:
+            OpenAICompatProvider("some-model")
+        self.assertIn("OPENAI_BASE_URL", str(ctx.exception))
+
+    def test_cli_prints_one_line_instead_of_a_traceback(self):
+        import contextlib
+        import io
+
+        from evalhub.cli import main
+        self.registry({})
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = main(["run", str(SUITE_DIR), "--agent", "openai:some-model", "--judge", "none"])
+        self.assertEqual(code, 2)
+        self.assertIn("配置缺失", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
 
 
 class _ScriptedProvider:

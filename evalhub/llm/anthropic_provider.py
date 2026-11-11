@@ -33,8 +33,16 @@ class AnthropicProvider:
             raise RuntimeError(f"anthropic SDK 版本过旧（{anthropic.__version__}），不支持 output_config。"
                                "请先执行：pip install -U anthropic")
         self._sdk = anthropic
-        # 凭据由 SDK 自己解析：ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / `ant auth login` 的 profile。
-        self.client = anthropic.AsyncAnthropic(max_retries=0)
+        from ..envvars import read_env
+
+        # 终端里没有、但系统环境变量里存了的，补给 SDK；都没有时交给 SDK 自己解析
+        # （ANTHROPIC_AUTH_TOKEN、`ant auth login` 的 profile 等），所以这里不强制要求。
+        options: dict[str, Any] = {}
+        for env_name, option in (("ANTHROPIC_API_KEY", "api_key"), ("ANTHROPIC_BASE_URL", "base_url")):
+            value = read_env(env_name)
+            if value:
+                options[option] = value
+        self.client = anthropic.AsyncAnthropic(max_retries=0, **options)
         self.model = model
         self.effort = effort
         self.max_tokens = max_tokens

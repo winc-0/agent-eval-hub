@@ -1,14 +1,13 @@
 """OpenAI 兼容接口接入：DeepSeek、豆包、通义千问、Kimi 等国内模型都走这一个实现。
 
-只用于非 Claude 模型。环境变量：
-  OPENAI_BASE_URL   例如 https://api.deepseek.com
-  OPENAI_API_KEY    对应厂商的 key
-价格各家不同，用 `--price 输入,输出`（每百万 token，美元）登记，否则成本记 0。
+只用于非 Claude 模型。环境变量（终端里没有时，会去读 Windows 系统里保存的环境变量）：
+  OPENAI_BASE_URL   例如 https://dashscope.aliyuncs.com/compatible-mode/v1（没有时读 DASHSCOPE_BASE_URL）
+  OPENAI_API_KEY    对应厂商的 key（没有时读 DASHSCOPE_API_KEY）
+价格各家不同，用 `--price 输入,输出`（每百万 token）登记，否则成本记 0。
 """
 from __future__ import annotations
 
 import json
-import os
 import time
 from typing import Any, Optional
 
@@ -23,8 +22,17 @@ class OpenAICompatProvider:
     def __init__(self, model: str, base_url: Optional[str] = None, max_tokens: int = 4096):
         import openai
 
+        from ..envvars import require_env
+
+        # 两个都必填：不给接口地址时 SDK 会默认发往 api.openai.com，
+        # 把别家的 Key 误发给第三方，所以这里不留默认值。
+        # OPENAI_* 优先；没有时用阿里云百炼的习惯命名 DASHSCOPE_*。
+        base_url = base_url or require_env(
+            "OPENAI_BASE_URL", "DASHSCOPE_BASE_URL",
+            hint="需要填模型服务的 OpenAI 兼容接口地址，例如 https://dashscope.aliyuncs.com/compatible-mode/v1")
+        api_key = require_env("OPENAI_API_KEY", "DASHSCOPE_API_KEY", hint="需要填模型服务的 API Key。")
         self._sdk = openai
-        self.client = openai.AsyncOpenAI(base_url=base_url or os.environ.get("OPENAI_BASE_URL"),
+        self.client = openai.AsyncOpenAI(base_url=base_url, api_key=api_key,
                                          max_retries=0)   # 重试交给调度器
         self.model = model
         self.max_tokens = max_tokens

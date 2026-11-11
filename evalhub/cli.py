@@ -23,6 +23,7 @@ from typing import Any
 
 from . import badcase as bc
 from .agent import make_agent
+from .envvars import MissingCredential
 from .export import export_jsonl
 from .gate import evaluate_gate, load_gate
 from .judge import calibrate, make_judge
@@ -283,7 +284,11 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except MissingCredential as e:   # 配置问题：给一句说明就够了，不打印堆栈
+        print(f"配置缺失：{e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
