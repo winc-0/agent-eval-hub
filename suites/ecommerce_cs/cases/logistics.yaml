@@ -68,7 +68,8 @@
     faults: [{tool: get_logistics, kind: empty, times: 9}]
   expect:
     tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
-    answer: {must_include: ["没有查询到|暂时没有|暂无"]}
+    # 要的是“如实说没查到”，措辞不限；有没有编造运单号由忠实度维度判。
+    answer: {must_include: ["没有查询到|没有查到|暂时没有|暂无|没有获取到|未获取到|查不到|无法查询|暂时无法"]}
   reference:
     tool_calls: [{name: get_logistics, args: {order_id: O1002}}]
     answer: 暂时没有查询到订单 O1002 的物流信息，请稍后再试，或回复“转人工”。
