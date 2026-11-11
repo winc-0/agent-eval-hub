@@ -17,6 +17,14 @@ from .base import EvalContext, dumps, grounding_corpus, make_score, numbers_in
 
 _ORDER_ID = re.compile(r"O\d{4,}")
 _TRACKING = re.compile(r"(?<![A-Za-z])[A-Z]{2}\d{8,}")
+# “请提供订单号（例如 O1001）”是在说明格式，不是在陈述事实，不算编造。
+_EXAMPLE_CUE = re.compile(r"(例如|比如|譬如|格式如|e\.g\.)[\s:：，,（(]*$", re.I)
+
+
+def _is_example(reply: str, start: int) -> bool:
+    return bool(_EXAMPLE_CUE.search(reply[max(0, start - 8):start]))
+
+
 _AMOUNT = re.compile(r"(?:¥\s*(\d+(?:\.\d+)?))|(?:(\d+(?:\.\d+)?)\s*元)")
 
 _UNSUPPORTED = RubricItem(
@@ -37,7 +45,8 @@ async def evaluate(ctx: EvalContext):
         corpus = grounding_corpus(trace, upto_turn=turn)
         known = numbers_in(corpus)
         for label, pattern in (("订单号", _ORDER_ID), ("运单号", _TRACKING)):
-            for value in sorted(set(pattern.findall(reply))):
+            claimed = {m.group() for m in pattern.finditer(reply) if not _is_example(reply, m.start())}
+            for value in sorted(claimed):
                 seen[label] = True
                 if value not in corpus:
                     bad.setdefault(label, []).append(f"第 {turn + 1} 轮的{label} {value} 在此前的工具结果和用户输入中都不存在")

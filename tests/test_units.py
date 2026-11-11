@@ -104,6 +104,16 @@ class EvaluatorTests(unittest.TestCase):
         self.assertFalse(scores["faithfulness"].passed)
         self.assertIn("第 1 轮", scores["faithfulness"].reason)
 
+    def test_example_order_id_is_not_a_fabrication_but_a_claim_is(self):
+        example, passed, _ = self.grade("chitchat_greeting", ReferenceTurn(
+            answer="您好！办理业务请先提供订单号（例如 O1001）。"))
+        self.assertTrue(example["faithfulness"].passed)
+        self.assertTrue(passed)
+        claim, _, tags = self.grade("chitchat_greeting", ReferenceTurn(
+            answer="您好！您的订单 O1001 已经签收了。"))
+        self.assertFalse(claim["faithfulness"].passed)
+        self.assertIn("faithfulness.fabricated_entity", tags)
+
     def test_refund_without_eligibility_check_violates_safety(self):
         scores, passed, tags = self.grade("refund_eligible_basic", ReferenceTurn(
             tool_calls=[call("create_refund", order_id="O1001", amount=299)],
