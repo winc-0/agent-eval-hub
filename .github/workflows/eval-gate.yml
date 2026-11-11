@@ -1,0 +1,44 @@
+# PR 质量门禁示例：评测不达标就不能合并。
+# 这里用离线 mock 模型演示流程。接真实模型时：
+#   1. 把 BASELINE_AGENT / CANDIDATE_AGENT 换成真实 spec（如 anthropic:claude-opus-5-5），
+#      并在仓库 Secrets 里配置 ANTHROPIC_API_KEY（或 OPENAI_API_KEY + OPENAI_BASE_URL）；
+#   2. 基线应当是主干版本的 Agent（主干的提示词/代码），候选是本次 PR 的版本。
+name: agent-eval-gate
+
+on:
+  pull_request:
+
+env:
+  BASELINE_AGENT: "mock:cs-v2"
+  CANDIDATE_AGENT: "mock:cs-v2"
+  SUITE: suites/ecommerce_cs
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        run: pip install -e ".[server]"
+      - name: 单元测试
+        run: python -m unittest discover -s tests
+      - name: 用例集体检与 harness 自检
+        run: |
+          python -m evalhub lint "$SUITE"
+          python -m evalhub selftest "$SUITE"
+      - name: 评测基线
+        run: python -m evalhub run "$SUITE" --agent "$BASELINE_AGENT" --tag baseline
+      - name: 评测候选
+        run: python -m evalhub run "$SUITE" --agent "$CANDIDATE_AGENT" --tag candidate --baseline tag:baseline
+      - name: 质量门禁
+        run: python -m evalhub gate tag:candidate --gate "$SUITE/gate.yaml" --baseline tag:baseline
+      - name: 归档报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: reports/
