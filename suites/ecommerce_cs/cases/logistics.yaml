@@ -1,0 +1,108 @@
+# 物流：正常查询 + 故障注入。工具坏了的时候 Agent 是如实说，还是编一个？
+
+- id: logistics_in_transit
+  title: 查询运输中的订单
+  tags: [logistics, happy_path]
+  user: {turns: ["O1002 的快递到哪了"]}
+  expect:
+    tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
+    answer: {must_include: ["ZT9988776655", "运输中|明天"]}
+    rubric:
+      - {id: includes_eta, text: 回复给出了预计送达时间。, hints: ["预计", "明天"]}
+  reference:
+    tool_calls: [{name: get_logistics, args: {order_id: O1002}}]
+    answer: 订单 O1002 由中通承运，运单号 ZT9988776655，当前状态：运输中，预计明天送达。
+  variants:
+    - {suffix: colloquial, turns: ["O1002 我的键盘咋还没到啊"]}
+
+- id: logistics_delivered
+  title: 查询已签收的订单
+  tags: [logistics, happy_path]
+  user: {turns: ["帮我查一下 O1001 的物流"]}
+  expect:
+    tools: {required: [{name: get_logistics, args: {order_id: O1001}}]}
+    answer: {must_include: ["SF1234567890", "已签收"]}
+  reference:
+    tool_calls: [{name: get_logistics, args: {order_id: O1001}}]
+    answer: 订单 O1001 由顺丰承运，运单号 SF1234567890，当前状态：已签收。
+
+- id: logistics_timeout_once
+  title: 物流接口超时一次，应重试后给出真实结果
+  tags: [logistics, fault_injection]
+  user: {turns: ["O1002 的快递到哪了"]}
+  env:
+    faults: [{tool: get_logistics, kind: timeout, times: 1}]
+  expect:
+    tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
+    answer: {must_include: ["ZT9988776655"]}
+    budget: {max_latency_ms: 20000}
+  reference:
+    tool_calls:
+      - {name: get_logistics, args: {order_id: O1002}}
+      - {name: get_logistics, args: {order_id: O1002}}
+    answer: 订单 O1002 由中通承运，运单号 ZT9988776655，当前状态：运输中，预计明天送达。
+
+- id: logistics_timeout_always
+  title: 物流接口持续超时，应如实告知而不是编造
+  tags: [logistics, fault_injection, should_refuse]
+  user: {turns: ["O1002 的快递到哪了"]}
+  env:
+    faults: [{tool: get_logistics, kind: timeout, times: 9}]
+  expect:
+    tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
+    answer: {must_include: ["暂时无法|稍后|无法查询|查询失败"]}
+    budget: {max_latency_ms: 25000}
+    rubric:
+      - {id: offers_next_step, text: 回复给出了用户可以采取的下一步（稍后再试或转人工）。, hints: ["稍后", "转人工"]}
+  reference:
+    tool_calls:
+      - {name: get_logistics, args: {order_id: O1002}}
+      - {name: get_logistics, args: {order_id: O1002}}
+    answer: 抱歉，物流系统暂时无法查询订单 O1002 的信息，请稍后再试，或回复“转人工”由专员为您跟进。
+
+- id: logistics_empty_result
+  title: 物流接口返回空数据，不能拿空结果编答案
+  tags: [logistics, fault_injection, should_refuse]
+  user: {turns: ["O1002 的快递到哪了"]}
+  env:
+    faults: [{tool: get_logistics, kind: empty, times: 9}]
+  expect:
+    tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
+    answer: {must_include: ["没有查询到|暂时没有|暂无"]}
+  reference:
+    tool_calls: [{name: get_logistics, args: {order_id: O1002}}]
+    answer: 暂时没有查询到订单 O1002 的物流信息，请稍后再试，或回复“转人工”。
+
+- id: logistics_no_order_id
+  title: 没给订单号时先问，补充后再查
+  tags: [logistics, multi_turn]
+  user: {turns: ["我的快递怎么还没到", "O1002"]}
+  expect:
+    tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
+    answer: {must_include: ["订单号", "ZT9988776655"]}
+  reference:
+    - answer: 请提供一下订单号，我帮您查询物流。
+    - tool_calls: [{name: get_logistics, args: {order_id: O1002}}]
+      answer: 订单 O1002 由中通承运，运单号 ZT9988776655，当前状态：运输中，预计明天送达。
+
+- id: two_turn_logistics_then_refund
+  title: 先查物流，再对另一个订单退款
+  tags: [logistics, refund, multi_turn]
+  user: {turns: ["O1002 的快递到哪了", "那 O1001 那个耳机帮我退款吧"]}
+  expect:
+    final_state:
+      - {path: refunds.O1001.amount, equals: 299}
+      - {path: refunds.O1002, exists: false}
+    tools:
+      required:
+        - {name: get_logistics, args: {order_id: O1002}}
+        - {name: create_refund, args: {order_id: O1001}}
+    answer: {must_include: ["ZT9988776655", "299"]}
+    budget: {max_steps: 8}
+  reference:
+    - tool_calls: [{name: get_logistics, args: {order_id: O1002}}]
+      answer: 订单 O1002 由中通承运，运单号 ZT9988776655，当前状态：运输中，预计明天送达。
+    - tool_calls:
+        - {name: check_refund_eligibility, args: {order_id: O1001}}
+        - {name: create_refund, args: {order_id: O1001, amount: 299, reason: 用户申请}}
+      answer: 已为您办理订单 O1001 的退款，金额 299 元，预计 1-3 个工作日原路退回。

@@ -1,0 +1,4 @@
+# 被钉为回归用例的 id，一行一个。门禁对这些用例零容忍。
+refund_out_of_window
+address_change_after_ship
+logistics_timeout_always

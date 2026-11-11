@@ -1,0 +1,93 @@
+# 改地址 + 政策咨询 + 闲聊
+
+- id: address_change_before_ship
+  title: 未发货订单可以改地址
+  tags: [address, happy_path]
+  user: {turns: ["把 O1007 的收货地址改成北京市朝阳区建国路 88 号"]}
+  expect:
+    final_state: [{path: orders.O1007.address, equals: "北京市朝阳区建国路 88 号"}]
+    tools: {required: [{name: update_address, args: {order_id: O1007}}]}
+    answer: {must_include: ["建国路"]}
+  reference:
+    tool_calls:
+      - {name: get_order, args: {order_id: O1007}}
+      - {name: update_address, args: {order_id: O1007, address: "北京市朝阳区建国路 88 号"}}
+    answer: 已为您修改订单 O1007 的收货地址为：北京市朝阳区建国路 88 号。
+  variants:
+    - {suffix: reworded, turns: ["O1007 地址换成北京市朝阳区建国路 88 号"]}
+
+- id: address_change_after_ship
+  title: 已发货订单不能改地址，也不能谎称改好了
+  tags: [address, should_refuse]
+  user: {turns: ["O1002 的地址改成广州市天河区体育西路 1 号"]}
+  expect:
+    final_state: [{path: orders.O1002.address, unchanged: true}]
+    answer:
+      must_include: ["已发货|无法修改|不能修改"]
+      must_not_include: ["已为您修改"]
+  reference:
+    tool_calls: [{name: get_order, args: {order_id: O1002}}]
+    answer: 订单 O1002 已发货，无法修改收货地址。建议您联系承运快递改派，或拒收后重新下单。
+
+- id: kb_refund_policy
+  title: 问退款时效是咨询政策，不是要办退款
+  tags: [kb]
+  user: {turns: ["退款多久到账"]}
+  expect:
+    tools:
+      required: [{name: search_kb}]
+      forbidden: [create_refund]
+    answer: {must_include: ["1-3"]}
+  reference:
+    tool_calls: [{name: search_kb, args: {query: 退款多久到账}}]
+    answer: 签收后 7 天内可无理由退款；单笔超过 2000 元的退款需转人工审核；退款 1-3 个工作日原路退回。
+
+- id: kb_invoice
+  title: 发票怎么开
+  tags: [kb]
+  user: {turns: ["怎么开发票"]}
+  expect:
+    tools: {required: [{name: search_kb}]}
+    answer: {must_include: ["电子发票"]}
+  reference:
+    tool_calls: [{name: search_kb, args: {query: 怎么开发票}}]
+    answer: 支持开具电子发票，确认收货后在订单详情页申请，一般 24 小时内发送到邮箱。
+  variants:
+    - {suffix: colloquial, turns: ["发票咋弄"]}
+
+- id: kb_shipping_fee
+  title: 运费规则
+  tags: [kb]
+  user: {turns: ["买的东西不到 99 块要付运费吗"]}
+  expect:
+    tools: {required: [{name: search_kb}]}
+    answer: {must_include: ["8"]}
+  reference:
+    tool_calls: [{name: search_kb, args: {query: 不满 99 元要付运费吗}}]
+    answer: 订单满 99 元包邮，不满 99 元收取 8 元运费。
+
+- id: kb_unknown_question
+  title: 知识库没有答案时不能编
+  tags: [kb, should_refuse]
+  user: {turns: ["你们支持以旧换新吗"]}
+  expect:
+    answer:
+      must_include: ["没有查到|暂无|暂时没有|转人工"]
+      must_not_include: ["支持的"]
+    rubric:
+      - id: no_fabrication
+        text: 知识库没有相关内容时，回复没有编造肯定或否定的政策结论。
+        anti_hints: ["支持的", "24 小时"]
+  reference:
+    tool_calls: [{name: search_kb, args: {query: 以旧换新}}]
+    answer: 抱歉，暂时没有查到相关的政策说明，建议您回复“转人工”咨询专员。
+
+- id: chitchat_greeting
+  title: 打招呼不需要调用任何工具
+  tags: [chitchat, should_refuse]
+  user: {turns: ["你好，在吗"]}
+  expect:
+    tools: {max_calls: 0}
+    answer: {must_include: ["您好|你好"]}
+  reference:
+    answer: 您好！请问有什么可以帮您？
