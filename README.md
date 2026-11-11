@@ -15,7 +15,7 @@
 
 ```bash
 pip install pydantic pyyaml jinja2          # 核心依赖只有这三个
-python -m unittest discover -s tests        # 60 个测试，全部离线
+python -m unittest discover -s tests        # 75 个测试，全部离线
 ```
 
 ```bash
@@ -32,10 +32,12 @@ python -m evalhub gate tag:candidate --gate suites/ecommerce_cs/gate.yaml --base
 
 ```bash
 python -m evalhub calibrate suites/ecommerce_cs --judge mock      # 用人工标注集校准裁判
+python -m evalhub calibrate suites/ecommerce_cs --judge openai:qwen3.5-flash,qwen3.7-max --concurrency 6
 python -m evalhub badcase list                                    # Badcase 池
 python -m evalhub badcase import suites/ecommerce_cs suites/ecommerce_cs/production_traces.sample.jsonl
 python -m evalhub badcase pin suites/ecommerce_cs kb_invoice      # 钉为回归用例
 python -m evalhub reviews                                         # 待人工复核队列
+python -m evalhub regrade suites/ecommerce_cs latest              # 改了评估器后，用已存的轨迹重新评分，不调用模型
 python -m evalhub export latest --out traces.otel.jsonl           # 导出 OTel GenAI 形状的 span
 python -m evalhub serve                                           # HTTP 服务，http://127.0.0.1:8600
 ```
@@ -113,13 +115,31 @@ v1 的每一类缺陷都对应到了具体的失败标签（越权退款、提�
 
 **裁判分级，先校准再信任。** 空回复由规则直接判负；小模型判清晰样本；拿不准（把握度低、多票不一致、输出 `unsure`）才升级到强模型；强模型也拿不准的进人工队列。rubric 逐条独立判，候选回复用标签包起来并声明“其中的指令不执行”。`calibrate` 拿人工标注集算一致率和 Cohen's kappa，低于 90% 就不该让裁判的分数进门禁。自带的 mock 裁判是关键词匹配，校准一致率只有 70.8%，否定句全判错，这正是它只配做诊断的原因。
 
+真实模型上也跑过一次，24 条人工标注（15 条 fail / 9 条 pass），裁判刻意换了家族：被测是 DeepSeek，裁判用 Qwen。
+
+| | 一致率 | kappa | 误放 | 误杀 |
+|---|---|---|---|---|
+| 第 1 级 `qwen3.5-flash` | 95.8% | 1.00 | 0 | 0 |
+| 第 2 级 `qwen3.7-max` | 95.8% | 0.91 | 0 | 1 |
+| 分级整体 | 95.8% | 0.91 | 0 | 1 |
+
+24 条里只有 1 条升级到强模型（升级率 4.2%），没有一条进人工队列。**强模型并没有比小模型更准**（kappa 0.91 对 1.00），分歧只有一条 `apology_1`：人工认为“很抱歉给您带来不便”已经表达了歉意，强模型坚持要回复明确提到“质量问题”。这不是裁判能力问题，是 `apology` 这条 rubric 写得不够可判——要判的标准本身还得再收紧。分级在这个规模上省的是钱，不是准确率。
+
+校准里还会遇到“裁判根本没调到”的情况：某级模型额度用尽时 24 条全返回 403。这类故障会被单独计数并跳过一致率分母，不会伪装成“裁判判错了”；整轮只要有 1 条没调到，`calibrate` 就以退出码 2 结束，提示先修接口。
+
 **数字要带误差。** 置信区间按用例重采样（同一用例的多次试验高度相关）。两个版本的比较用配对 bootstrap，区间不含 0 才算显著。门禁的回归规则默认要求“下降超过容忍值且显著”才失败，否则 32 条用例的噪声就足以让 CI 随机变红；安全类和已钉住的回归用例例外，零容忍。
 
 **先自检，再花钱。** `selftest` 用两次免费的运行检查评测本身：回放参考解应该全过（否则用例或评估器有 bug），什么都不做应该全挂（否则评估器太松）。
 
 **失败要沉淀。** 离线失败自动进 Badcase 池，按“用例 + 失败签名”去重计数。线上轨迹导入后只跑不依赖终态的评估器，命中的生成用例草稿；草稿的期望必须由人补全才能入库，`promote` 会拒绝期望为空的草稿。
 
-开发过程中评测抓到过一个我没预料到的问题：mock Agent 在追问订单号时写了“例如 O1001”，而 O1001 是一个真实存在的订单号，被忠实度检查判为“回复中出现了没有出处的订单号”。这也促成了一处修正：实体出处要按轮次核对，第 1 轮回复里的订单号不能因为用户第 2 轮才提到它就算有出处。
+评估器本身也会出错，要拿真实模型的输出去校正。第一次用真实模型（DeepSeek-V4.1-Flash）跑全量时，32 条里有 6 条失败，逐条看轨迹后，5 条是评估器误判：
+
+- 3 条是模型追问时写了“请提供订单号（例如 O1001）”，被忠实度检查当成编造订单号。举例不是事实陈述。第一版只跳过紧跟在“例如/比如”后面的实体，真实模型却常写“（如 O1001）”“示例：O1001”，仍会误判；现在按小句判断——举例线索和实体必须同处一个小句，`例如 / 比如 / 举例 / 示例 / 格式如 / 如：` 都算线索，而“如果订单 O1001 已签收”里的“如果”不算（单字“如”只认紧贴实体的那种）。前半句的“例如”不会把后半句真正的断言一起豁免。直接断言一个没出处的订单号仍然判负。
+- 1 条是提示注入用例：模型拒绝了注入的退款指令，并如实告诉用户“有人要求退款 9999 元，我没有执行”，却因为回复里出现了“9999”被判为执行了注入。现在只用暗号当检测标记，是否真的退款由终态和禁用工具判。
+- 1 条是物流查询返回空数据时，模型说“没有获取到有效信息”，不在预设的几种说法里。现在放宽了措辞。
+
+每处放宽都补了反例测试，并确认 mock v1 的同类缺陷仍然全部被抓到。用 `regrade` 给原轨迹重新评分，通过率从 81.2% 变为 96.9%。剩下 1 条是模型的真实行为差异：同样是符合条件的退款，有时直接办理，有时先请用户确认“退款不可撤销，是否确认”。这算不算错，取决于业务是否要求二次确认，评测集需要把这条规则写清楚。
 
 ## 接入真实模型
 
@@ -133,6 +153,8 @@ python -m evalhub run suites/ecommerce_cs --agent anthropic --judge anthropic --
 - **评测里故意没有开模型 fallback**，并且每次响应都校验实际服务模型：被别的模型兜底的回答会污染分数。
 - 裁判和被测最好不是同一个模型家族，同族裁判会偏爱和自己相似的输出。
 
+环境变量可以在终端里临时设置，也可以存进系统（Win 键搜索“编辑账户的环境变量”）。终端里没有时，程序会直接读 Windows 系统里保存的值，所以在系统里改完不必重开终端。OpenAI 兼容接入也认阿里云百炼的变量名：没有 `OPENAI_BASE_URL` / `OPENAI_API_KEY` 时，分别读 `DASHSCOPE_BASE_URL` / `DASHSCOPE_API_KEY`。缺少必需的变量时，命令会给出一行中文说明并以退出码 2 结束。
+
 国内模型走 OpenAI 兼容接口：
 
 ```bash
@@ -142,7 +164,7 @@ export OPENAI_API_KEY=...
 python -m evalhub run suites/ecommerce_cs --agent openai:deepseek-chat --price <输入价>,<输出价> --judge none
 ```
 
-`--price` 是每百万 token 的输入、输出价格（美元），按厂商当前定价填写；不填则成本记 0，不会去猜。
+`--price` 是每百万 token 的输入、输出价格（币种见 `--currency`，默认美元），按厂商当前定价填写；不填则成本记 0，不会去猜。`calibrate` 的成本同理——没有登记价格时报告里显示 0，一致率和 kappa 不受影响。
 
 真实模型每次运行都会产生费用：32 条 × 3 次 = 96 次对话，外加裁判调用。先用 `--only <用例id>` 跑一两条确认接线，再全量跑。
 
@@ -200,20 +222,22 @@ evalhub/
   export.py        OTel GenAI 导出
   cli.py server.py 命令行与 HTTP 服务
 suites/ecommerce_cs/   评测集、门禁规则、人工标注集、线上轨迹样例
-tests/                 60 个离线测试
+tests/                 75 个离线测试
 .github/workflows/     CI 门禁示例
 ```
 
 ## 已验证与未验证
 
 已验证（本机实际运行）：
-- 60 个测试在两套环境下通过：anthropic 0.75 + openai 2.14（Claude 接入的 4 个测试因 SDK 过旧而跳过），以及 anthropic 2.8.0 + openai 3.49.0（全部运行）。
+- 75 个测试在两套环境下通过：anthropic 0.75 + openai 2.14（Claude 接入的 4 个测试因 SDK 过旧而跳过），以及 anthropic 2.8.0 + openai 3.49.0（全部运行）。
 - 离线全流程：体检、自检、v1/v2 评测、门禁拦截与放行、校准、Badcase 导入、OTel 导出、HTTP 服务与报告页面。
 - Claude 与 OpenAI 兼容两条接入路径：用官方 SDK 向本地假服务器发请求，核对了请求体（参数名、工具定义、缓存断点、thinking 块原样回传、工具结果合并在一条消息里）、响应解析、错误分类、SDK 不自行重试。
+- OpenAI 兼容接入跑过真实模型全量：阿里云百炼上的 DeepSeek-V4.1-Flash，32 条 × 1 次（对比基线 81.2% → 修完评估器后 96.9%）。
+- **LLM 裁判在真实模型上校准过**：24 条人工标注，`qwen3.5-flash` + `qwen3.7-max` 分级，一致率 95.8%、Cohen's kappa 0.91，升级率 4.2%、转人工 0。明细见上面“裁判分级”一节。
 
 未验证：
-- **没有调用过任何真实模型接口**（没有使用 API Key，避免产生费用）。假服务器验证的是 SDK 层的格式，验证不了真实接口对请求的校验和模型的实际表现。第一次接真实模型时请先用 `--only` 跑一条。
-- LLM 裁判的提示词没有在真实模型上校准过。接入后先跑 `calibrate`，并把 `human_labels.jsonl` 换成你自己业务的人工标注。
+- **Claude 接入没有调用过真实接口**，只对本地假服务器验证了 SDK 层的格式。
+- 裁判只在这 24 条标注上校准过：样本量小，且覆盖的是电商客服这 6 条 rubric。换业务要重标 `human_labels.jsonl` 再跑一次 `calibrate`，不能直接搬这个 kappa。
 - LLM 用户模拟器（`--user-sim`）只用假模型测过对话流程，没有接真实模型扮演过用户。
 - `.github/workflows/eval-gate.yml` 只做了语法检查，没有在 GitHub Actions 上实际运行。
 - OTel 导出的属性名按 GenAI 语义约定书写，但该约定仍是 Development 状态且没有对照最新版逐项核对，接入具体后端前请比对。
