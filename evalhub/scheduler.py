@@ -130,3 +130,33 @@ async def run_suite(suite: Suite, agent: AgentAdapter, store: Store, cfg: RunCon
     await asyncio.gather(*(one(c, t) for c, t in todo))
     store.finish_run(run_id)
     return run_id
+
+
+async def regrade_run(suite: Suite, store: Store, source_run_id: str, judge: Optional[CascadeJudge] = None,
+                      tag: Optional[str] = None) -> str:
+    """用当前的评估器和用例期望，给一次已有运行里保存的轨迹重新打分，不再调用被测模型。
+
+    修了评估器的误判之后用它验证效果，不花被测模型的额度。新结果另存为一次运行，
+    原运行保持不变；故障的 trial 原样带过来（它们没有轨迹可评）。
+    """
+    src = store.get_run(source_run_id)
+    trials = [t for t in store.trials(source_run_id) if t.case_id in {c.id for c in suite.cases}]
+    run_id = new_run_id()
+    index = suite.case_index()
+    config = {**src["config"], "tag": tag if tag is not None else f"{src['tag']}-regrade",
+              "regraded_from": source_run_id}
+    store.create_run(run_id, suite.config.name, suite.fingerprint(), src["agent"], src["model"],
+                     ",".join(judge.models) if judge else "none", config["tag"], config,
+                     {t.case_id: index[t.case_id] for t in trials}, suite.config.gating_dimensions)
+    for old in trials:
+        if old.status == "error" or old.trace is None:
+            store.save_trial(old.model_copy(update={"run_id": run_id}))
+            continue
+        case = suite.case(old.case_id)
+        scores = await evaluate_all(EvalContext(case, old.trace, suite, judge))
+        passed, tags = verdict(scores, suite.config.gating_dimensions)
+        store.save_trial(old.model_copy(update={
+            "run_id": run_id, "scores": scores, "failure_tags": tags,
+            "passed": passed and old.status == "scored"}))
+    store.finish_run(run_id)
+    return run_id

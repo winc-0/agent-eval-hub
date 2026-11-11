@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import time
 import unittest
+import unittest.mock
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -128,6 +129,20 @@ class PipelineTests(TempDirCase):
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["oracle_failures"], [])
         self.assertEqual(res["null_passes"], [])
+
+    def test_regrade_rescores_saved_traces_without_calling_the_model(self):
+        from evalhub.scheduler import regrade_run
+
+        source = self.evaluate("mock:cs-v1", "v1")
+        before = build_report(self.store, source)
+        with unittest.mock.patch("evalhub.agent.LLMAgent.run", side_effect=AssertionError("不应调用模型")):
+            new = run(regrade_run(self.suite, self.store, source))
+        after = build_report(self.store, new, baseline_id=source)
+        self.assertEqual(after["run"]["tag"], "v1-regrade")
+        self.assertEqual(after["run"]["config"]["regraded_from"], source)
+        self.assertEqual(after["headline"]["rate"], before["headline"]["rate"], "评估器没变，分数应一致")
+        self.assertEqual(len(self.store.trials(new)), len(self.store.trials(source)))
+        self.assertEqual(self.store.get_run(source)["tag"], "v1", "原运行不受影响")
 
     def test_null_and_oracle_bracket_the_scale(self):
         cfg = RunConfig(trials=1, **FAST)

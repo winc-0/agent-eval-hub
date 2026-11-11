@@ -30,7 +30,7 @@ from .judge import calibrate, make_judge
 from .llm import register_pricing
 from .report import build_report, render_markdown, write_reports
 from .report.html import currency_symbol
-from .scheduler import RunConfig, run_suite
+from .scheduler import RunConfig, regrade_run, run_suite
 from .selftest import selftest
 from .store import Store
 from .suite import Suite, lint
@@ -113,6 +113,18 @@ def cmd_run(args: argparse.Namespace) -> int:
     print_summary(build_report(store, run_id, baseline))
     paths = write_reports(store, run_id, args.out, baseline)
     print(f"\n报告：{paths['html']}\n本次归入 Badcase 池 {added} 条。run_id={run_id}")
+    return 0
+
+
+def cmd_regrade(args: argparse.Namespace) -> int:
+    suite, store = Suite.load(args.suite), Store(args.db)
+    source = store.resolve_run(args.run, suite.config.name)
+    judge = make_judge(args.judge, args.judge_threshold, args.judge_votes)
+    run_id = asyncio.run(regrade_run(suite, store, source, judge, args.tag))
+    print(f"已用当前评估器重新评分 {source} 的轨迹（未调用被测模型）")
+    print_summary(build_report(store, run_id, source))
+    paths = write_reports(store, run_id, args.out, source)
+    print(f"\n报告：{paths['html']}\nrun_id={run_id}")
     return 0
 
 
@@ -246,6 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--out", default="reports")
     sp.add_argument("-v", "--verbose", action="store_true")
     sp.set_defaults(func=cmd_run)
+
+    sp = sub.add_parser("regrade", help="用当前评估器给已有轨迹重新评分，不调用被测模型")
+    sp.add_argument("suite"); sp.add_argument("run", help="run_id / latest / tag:<标签>")
+    judge_opts(sp, "none")
+    sp.add_argument("--tag", default=None, help="新运行的标签，默认 <原标签>-regrade")
+    sp.add_argument("--out", default="reports"); sp.set_defaults(func=cmd_regrade)
 
     sp = sub.add_parser("report", help="生成报告")
     sp.add_argument("run"); sp.add_argument("--baseline", default=None); sp.add_argument("--out", default="reports")
