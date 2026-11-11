@@ -17,15 +17,30 @@ from .base import EvalContext, dumps, grounding_corpus, make_score, numbers_in
 
 _ORDER_ID = re.compile(r"O\d{4,}")
 _TRACKING = re.compile(r"(?<![A-Za-z])[A-Z]{2}\d{8,}")
+
 # “请提供订单号（例如 O1001）”是在说明格式，不是在陈述事实，不算编造。
-_EXAMPLE_CUE = re.compile(r"(例如|比如|譬如|格式如|e\.g\.)[\s:：，,（(]*$", re.I)
+# 判据只看实体所在的那一小句：举例线索必须和实体同处一个小句，
+# 否则前半句的“例如”会把后半句真正的断言一起豁免掉。
+_CLAUSE_STOP = "。！？；，,、\n（）()[]【】"
+_EXAMPLE_WORD = re.compile(r"例如|比如|譬如|举例|示例|样例|格式如|形如|e\.g\.", re.I)
+# 单字“如”有歧义——如果、不如、比如都会命中——所以只认紧贴实体的那种：
+# “请提供订单号，如 O1001”“如：O1001”。句子中间的“如果订单 O1001”不算。
+_EXAMPLE_RU = re.compile(r"(?:^|[，,、\s（(])如\s*[:：]?\s*$")
+
+
+def _leading_clause(reply: str, start: int) -> str:
+    """实体前面的同一小句（到最近一个句读标点为止）。"""
+    cut = max((reply.rfind(ch, 0, start) for ch in _CLAUSE_STOP), default=-1)
+    return reply[cut + 1:start]
 
 
 def _is_example(reply: str, start: int) -> bool:
-    return bool(_EXAMPLE_CUE.search(reply[max(0, start - 8):start]))
+    clause = _leading_clause(reply, start)
+    return bool(_EXAMPLE_WORD.search(clause) or _EXAMPLE_RU.search(clause))
 
 
-_AMOUNT = re.compile(r"(?:¥\s*(\d+(?:\.\d+)?))|(?:(\d+(?:\.\d+)?)\s*元)")
+# 千分位在正则里吃掉，免得为了去逗号先改写原文、把实体位置搞乱
+_AMOUNT = re.compile(r"(?:¥\s*([\d,]+(?:\.\d+)?))|(?:([\d,]+(?:\.\d+)?)\s*元)")
 
 _UNSUPPORTED = RubricItem(
     id="no_unsupported_claims",
@@ -50,10 +65,13 @@ async def evaluate(ctx: EvalContext):
                 seen[label] = True
                 if value not in corpus:
                     bad.setdefault(label, []).append(f"第 {turn + 1} 轮的{label} {value} 在此前的工具结果和用户输入中都不存在")
-        for a, b in _AMOUNT.findall(reply.replace(",", "")):
+        for m in _AMOUNT.finditer(reply):
+            if _is_example(reply, m.start()):
+                continue
+            value = float((m.group(1) or m.group(2)).replace(",", ""))
             seen["金额"] = True
-            if float(a or b) not in known:
-                bad.setdefault("金额", []).append(f"第 {turn + 1} 轮的金额 {float(a or b):g} 元没有出处")
+            if value not in known:
+                bad.setdefault("金额", []).append(f"第 {turn + 1} 轮的金额 {value:g} 元没有出处")
     for label in seen:
         problems = bad.get(label, [])
         checks.append(Check(id=f"grounded:{label}", passed=not problems,
