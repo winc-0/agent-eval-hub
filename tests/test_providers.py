@@ -28,6 +28,7 @@ from evalhub.suite import Suite
 SUITE_DIR = Path(__file__).resolve().parents[1] / "suites" / "ecommerce_cs"
 FINAL = "很抱歉给您带来不便。已为您办理订单 O1001 的退款，金额 299 元，预计 1-3 个工作日原路退回。"
 JUDGE_JSON = json.dumps({"reason": "回复里有“很抱歉”", "verdict": "pass", "confidence": 0.9}, ensure_ascii=False)
+ASK = "订单 O1001 符合退款条件，可退金额 299 元。退款不可撤销，是否确认办理？"
 STEPS = [("check_refund_eligibility", {"order_id": "O1001"}),
          ("create_refund", {"order_id": "O1001", "amount": 299, "reason": "耳机有杂音"})]
 
@@ -78,6 +79,9 @@ class FakeLLMServer:
             return {**base, "content": [{"type": "text", "text": JUDGE_JSON}], "stop_reason": "end_turn"}
         done = sum(1 for m in body["messages"] if isinstance(m["content"], list)
                    for b in m["content"] if b.get("type") == "tool_result")
+        users = sum(1 for m in body["messages"] if m["role"] == "user" and isinstance(m["content"], str))
+        if done == 1 and users == 1:   # 核验完，先请用户确认
+            return {**base, "stop_reason": "end_turn", "content": [{"type": "text", "text": ASK}]}
         if done < len(STEPS):
             name, args = STEPS[done]
             return {**base, "stop_reason": "tool_use", "content": [
@@ -94,6 +98,8 @@ class FakeLLMServer:
         if "response_format" in body:
             return reply({"content": JUDGE_JSON}, "stop")
         done = sum(1 for m in body["messages"] if m["role"] == "tool")
+        if done == 1 and sum(1 for m in body["messages"] if m["role"] == "user") == 1:
+            return reply({"content": ASK}, "stop")
         if done < len(STEPS):
             name, args = STEPS[done]
             return reply({"content": None, "tool_calls": [{"id": f"call_{done}", "type": "function", "function": {
@@ -127,8 +133,9 @@ class ProviderCase(unittest.TestCase):
         trace = result.trace
         self.assertEqual([c.name for c in trace.tool_calls], [name for name, _ in STEPS])
         self.assertEqual(trace.final_state["refunds"]["O1001"]["amount"], 299.0)
-        self.assertEqual(trace.usage.llm_calls, 3)
-        self.assertEqual(trace.usage.output_tokens, 60)
+        self.assertEqual(trace.usage.llm_calls, 4)
+        self.assertEqual(trace.usage.output_tokens, 80)
+        self.assertEqual([c.turn for c in trace.tool_calls], [0, 1], "退款发生在用户确认之后的那一轮")
         return trace
 
     def assert_error(self, provider, status: int, error_class: str, retryable: bool):
@@ -159,10 +166,10 @@ class AnthropicProviderTests(ProviderCase):
     def test_agent_loop_end_to_end(self):
         trace = self.assert_trial_passes(self.provider())
         self.assertEqual(trace.model, "claude-opus-5-5")
-        self.assertEqual((trace.usage.input_tokens, trace.usage.cache_read_tokens), (300, 150))
+        self.assertEqual((trace.usage.input_tokens, trace.usage.cache_read_tokens), (400, 200))
         self.assertGreater(trace.usage.cost_usd, 0, "按实际服务模型的价格计费")
 
-        first, second, third = self.bodies()
+        first, second, third, _ = self.bodies()
         self.assertEqual(first["model"], "claude-opus-5-5")
         self.assertEqual(first["output_config"], {"effort": "medium"})
         self.assertEqual(first["system"][0]["cache_control"], {"type": "ephemeral"})
@@ -223,9 +230,9 @@ class OpenAICompatProviderTests(ProviderCase):
         register_pricing("deepseek-chat", 0.5, 2.0)
         trace = self.assert_trial_passes(self.provider())
         self.assertEqual(trace.model, "deepseek-chat")
-        self.assertAlmostEqual(trace.usage.cost_usd, (300 * 0.5 + 60 * 2.0) / 1e6)
+        self.assertAlmostEqual(trace.usage.cost_usd, (400 * 0.5 + 80 * 2.0) / 1e6)
 
-        first, second, _ = self.bodies()
+        first, second, _, _ = self.bodies()
         self.assertEqual(self.server.requests[0]["path"], "/v1/chat/completions")
         self.assertEqual(first["messages"][0]["role"], "system")
         self.assertEqual(first["tools"][0]["type"], "function")
