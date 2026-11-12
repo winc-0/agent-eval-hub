@@ -9,8 +9,15 @@ from __future__ import annotations
 import asyncio
 
 from ..judge import JudgeRequest
-from ..models import Check, JudgeMeta
-from .base import EvalContext, dumps, make_score
+from ..models import Check, JudgeMeta, RubricItem
+from .base import EvalContext, dumps, judge_view, make_score
+
+# 代码查不了的幻觉（没有实体的事实性陈述）交给裁判。放在诊断维度而不是门禁：
+# 这条标准还没有用人工标注校准过，没校准的裁判不能决定“能不能上线”。
+UNSUPPORTED_CLAIMS = RubricItem(
+    id="no_unsupported_claims",
+    text="回复中的事实性陈述（政策、时效、订单状态、是否支持某项服务等）都能在对话或工具结果中找到依据，没有编造。"
+         "礼貌用语、对用户的建议、如实说明“没有查到”都不算编造。")
 
 
 async def evaluate(ctx: EvalContext):
@@ -18,9 +25,10 @@ async def evaluate(ctx: EvalContext):
     if ctx.judge is None or not rubric:
         return make_score("quality", [], grader="llm")
     trace = ctx.trace
-    dialogue = "\n".join(f"用户：{u}" for u in trace.user_messages)
+    if ctx.judge.semantic:   # 语义判断只有真实 LLM 裁判做得了
+        rubric = rubric + [UNSUPPORTED_CLAIMS]
+    dialogue, answer = judge_view(trace)
     tools = dumps([{"tool": c.name, "args": c.args, "result": c.result} for c in trace.tool_calls])
-    answer = "\n".join(trace.answers)
     results = await asyncio.gather(*(ctx.judge.judge(JudgeRequest(item, answer, dialogue, tools))
                                      for item in rubric))
     checks = []
