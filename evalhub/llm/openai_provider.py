@@ -19,7 +19,8 @@ _STOP = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens", "
 class OpenAICompatProvider:
     name = "openai"
 
-    def __init__(self, model: str, base_url: Optional[str] = None, max_tokens: int = 4096):
+    def __init__(self, model: str, base_url: Optional[str] = None, max_tokens: int = 4096,
+                 thinking: Optional[bool] = None):
         import openai
 
         from ..envvars import require_env
@@ -36,10 +37,16 @@ class OpenAICompatProvider:
                                          max_retries=0)   # 重试交给调度器
         self.model = model
         self.max_tokens = max_tokens
+        # 思考模式默认不开也不关（各家未必支持，乱传会被 400 拒）。
+        # 裁判判一条“这话有没有道歉”不需要思考，开了只会把额度烧在思维链上——
+        # 实测一次全量裁判的输出 token 是输入的两倍多，绝大部分是思考。
+        self.extra_body = None if thinking is None else {"enable_thinking": thinking}
 
     async def _create(self, **kwargs: Any):
         sdk = self._sdk
         started = time.perf_counter()
+        if self.extra_body:
+            kwargs["extra_body"] = self.extra_body
         try:
             resp = await self.client.chat.completions.create(
                 model=self.model, max_tokens=self.max_tokens, **kwargs)

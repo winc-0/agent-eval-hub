@@ -173,6 +173,18 @@ class CascadeJudge:
     def models(self) -> list[str]:
         return [t.model for t in self.tiers]
 
+    async def _call(self, backend: JudgeBackend, req: JudgeRequest) -> JudgeVerdict:
+        """调一级裁判。网络类故障退避重试两次——裁判是嵌在评估器里调的，
+        不像被测模型那样有调度器兜底；一次抖动就丢掉一条评价不划算。"""
+        for attempt in range(3):
+            try:
+                return await backend.judge(req)
+            except InfraError as e:
+                if not e.retryable or attempt == 2:
+                    raise
+                await asyncio.sleep(1.0 * 2 ** attempt)
+        raise AssertionError("unreachable")
+
     async def judge(self, req: JudgeRequest) -> CascadeResult:
         if not req.answer.strip():
             return CascadeResult("fail", 0, False, False, "空回复，规则直接判负", "rule")
@@ -186,7 +198,7 @@ class CascadeJudge:
         verdicts: list[JudgeVerdict] = []
         result: Optional[CascadeResult] = None
         for tier, backend in enumerate(self.tiers, start=1):
-            round_ = [await backend.judge(req) for _ in range(self.votes if tier == 1 else 1)]
+            round_ = [await self._call(backend, req) for _ in range(self.votes if tier == 1 else 1)]
             verdicts += round_
             agreed = len({v.verdict for v in round_}) == 1
             head = round_[0]
@@ -215,7 +227,10 @@ def make_judge(spec: Optional[str], threshold: float = 0.75, votes: int = 1) -> 
     if kind == "anthropic":
         names = names or ["claude-haiku-5-5", "claude-opus-5-5"]
     if kind in ("anthropic", "openai") and names:
-        return CascadeJudge([LLMJudgeBackend(make_provider(f"{kind}:{m}")) for m in names], threshold, votes)
+        # 裁判一律关思考：判“这句话有没有道歉”不需要推理链，开着只是把输出 token
+        # 全部烧在思维链上（实测一次全量裁判的输出是输入的两倍多）。
+        return CascadeJudge([LLMJudgeBackend(make_provider(f"{kind}:{m}", thinking=False)) for m in names],
+                            threshold, votes)
     raise ValueError(f"无法识别的裁判 spec：{spec}")
 
 

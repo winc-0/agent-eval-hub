@@ -10,7 +10,7 @@ from .base import (ChatProvider, ChatResponse, Completion, Conversation, InfraEr
                    ToolCall, ToolResult, cost_usd, price_of, register_pricing)
 
 
-def make_provider(spec: str) -> ChatProvider:
+def make_provider(spec: str, thinking: bool | None = None) -> ChatProvider:
     kind, _, model = spec.partition(":")
     if kind == "mock":
         from .mock import MockCSProvider
@@ -22,7 +22,7 @@ def make_provider(spec: str) -> ChatProvider:
         if not model:
             raise ValueError("openai 接入需要写明模型名，例如 openai:deepseek-chat")
         from .openai_provider import OpenAICompatProvider
-        return OpenAICompatProvider(model)
+        return OpenAICompatProvider(model, thinking=thinking)
     raise ValueError(f"无法识别的模型 spec：{spec}")
 
 
