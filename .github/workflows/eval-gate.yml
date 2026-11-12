@@ -26,7 +26,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: 安装依赖
-        run: pip install -e ".[server]"
+        # 装上两条真实模型接入的 SDK：不装的话相关测试会跳过，CI 就覆盖不到它们。
+        run: pip install -e ".[server,openai,claude]"
       - name: 单元测试
         run: python -m unittest discover -s tests
       - name: 用例集体检与 harness 自检

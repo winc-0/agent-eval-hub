@@ -20,6 +20,11 @@ from evalhub.suite import Suite, lint
 
 SUITE_DIR = Path(__file__).resolve().parents[1] / "suites" / "ecommerce_cs"
 
+try:   # 可选依赖：没装 SDK 时相关测试跳过，而不是让整轮变红
+    import openai as _openai_sdk
+except ImportError:
+    _openai_sdk = None
+
 
 def run(coro):
     return asyncio.run(coro)
@@ -400,48 +405,41 @@ class EnvVarsTests(unittest.TestCase):
         from evalhub.envvars import _registry_value
         self.assertIsNone(_registry_value("EVALHUB_TEST_SURELY_NOT_SET_7731"))
 
+    @unittest.skipIf(_openai_sdk is None, "未安装 openai SDK")
     def test_openai_provider_uses_saved_values(self):
-        try:
-            from evalhub.llm.openai_provider import OpenAICompatProvider
-        except ImportError:
-            self.skipTest("未安装 openai SDK")
+        from evalhub.llm.openai_provider import OpenAICompatProvider
         self.registry({"OPENAI_API_KEY": "sk-saved", "OPENAI_BASE_URL": "https://example.test/v1"})
         p = OpenAICompatProvider("some-model")
         self.assertEqual(p.client.api_key, "sk-saved")
         self.assertEqual(str(p.client.base_url).rstrip("/"), "https://example.test/v1")
 
+    @unittest.skipIf(_openai_sdk is None, "未安装 openai SDK")
     def test_openai_provider_accepts_dashscope_names(self):
-        try:
-            from evalhub.llm.openai_provider import OpenAICompatProvider
-        except ImportError:
-            self.skipTest("未安装 openai SDK")
+        from evalhub.llm.openai_provider import OpenAICompatProvider
         self.registry({"DASHSCOPE_API_KEY": "sk-ds", "DASHSCOPE_BASE_URL": "https://ds.example/compatible-mode/v1"})
         p = OpenAICompatProvider("some-model")
         self.assertEqual(p.client.api_key, "sk-ds")
         self.assertEqual(str(p.client.base_url).rstrip("/"), "https://ds.example/compatible-mode/v1")
 
+    @unittest.skipIf(_openai_sdk is None, "未安装 openai SDK")
     def test_openai_names_take_priority_over_dashscope_names(self):
-        try:
-            from evalhub.llm.openai_provider import OpenAICompatProvider
-        except ImportError:
-            self.skipTest("未安装 openai SDK")
+        from evalhub.llm.openai_provider import OpenAICompatProvider
         self.registry({"OPENAI_API_KEY": "sk-oa", "DASHSCOPE_API_KEY": "sk-ds",
                        "OPENAI_BASE_URL": "https://oa.example/v1", "DASHSCOPE_BASE_URL": "https://ds.example/v1"})
         p = OpenAICompatProvider("some-model")
         self.assertEqual(p.client.api_key, "sk-oa")
         self.assertIn("oa.example", str(p.client.base_url))
 
+    @unittest.skipIf(_openai_sdk is None, "未安装 openai SDK")
     def test_openai_provider_refuses_to_guess_the_endpoint(self):
         from evalhub.envvars import MissingCredential
-        try:
-            from evalhub.llm.openai_provider import OpenAICompatProvider
-        except ImportError:
-            self.skipTest("未安装 openai SDK")
+        from evalhub.llm.openai_provider import OpenAICompatProvider
         self.registry({"OPENAI_API_KEY": "sk-saved"})   # 有 Key 没地址：不能默认发往 api.openai.com
         with self.assertRaises(MissingCredential) as ctx:
             OpenAICompatProvider("some-model")
         self.assertIn("OPENAI_BASE_URL", str(ctx.exception))
 
+    @unittest.skipIf(_openai_sdk is None, "未安装 openai SDK")
     def test_cli_prints_one_line_instead_of_a_traceback(self):
         import contextlib
         import io
