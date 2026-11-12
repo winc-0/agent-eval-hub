@@ -7,6 +7,9 @@ name: agent-eval-gate
 
 on:
   pull_request:
+  push:
+    branches: [main]     # 主干每次提交也跑一遍，避免门禁只在 PR 上才生效
+  workflow_dispatch:     # 也能手动触发，不依赖开 PR
 
 env:
   BASELINE_AGENT: "mock:cs-v2"
