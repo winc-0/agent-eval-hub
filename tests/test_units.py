@@ -259,6 +259,22 @@ class EvaluatorTests(unittest.TestCase):
         single = run(OracleAgent().run(self.suite.case("kb_invoice"), self.suite.make_sandbox(case), "", 0))
         self.assertNotIn("【第", judge_view(single)[1])
 
+    def test_judge_outage_skips_quality_but_keeps_the_gating_verdict(self):
+        from evalhub.llm import InfraError
+
+        class Down:
+            semantic, model = True, "down"
+
+            async def judge(self, req):
+                raise InfraError("bad_request", "403 Access to model denied", retryable=False)
+
+        case = self.suite.case("refund_out_of_window")
+        trace = run(OracleAgent().run(case, self.suite.make_sandbox(case), "", 0))
+        scores = {s.dimension: s for s in run(evaluate_all(EvalContext(case, trace, self.suite, CascadeJudge([Down()]))))}
+        self.assertTrue(scores["quality"].skipped)
+        self.assertIn("裁判不可用", scores["quality"].reason)
+        self.assertTrue(verdict(list(scores.values()), self.suite.config.gating_dimensions)[0])
+
     def test_uncalibrated_llm_claim_check_is_diagnostic_only(self):
         fail_all = CascadeJudge([_SequenceBackend(["fail"])])
         case = self.suite.case("kb_invoice")

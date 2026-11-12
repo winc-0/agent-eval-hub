@@ -133,7 +133,7 @@ async def run_suite(suite: Suite, agent: AgentAdapter, store: Store, cfg: RunCon
 
 
 async def regrade_run(suite: Suite, store: Store, source_run_id: str, judge: Optional[CascadeJudge] = None,
-                      tag: Optional[str] = None) -> str:
+                      tag: Optional[str] = None, concurrency: int = 8) -> str:
     """用当前的评估器和用例期望，给一次已有运行里保存的轨迹重新打分，不再调用被测模型。
 
     修了评估器的误判之后用它验证效果，不花被测模型的额度。新结果另存为一次运行，
@@ -148,15 +148,20 @@ async def regrade_run(suite: Suite, store: Store, source_run_id: str, judge: Opt
     store.create_run(run_id, suite.config.name, suite.fingerprint(), src["agent"], src["model"],
                      ",".join(judge.models) if judge else "none", config["tag"], config,
                      {t.case_id: index[t.case_id] for t in trials}, suite.config.gating_dimensions)
-    for old in trials:
+    sem = asyncio.Semaphore(concurrency)   # 带 LLM 裁判时每条都要调模型，串行太慢
+
+    async def one(old: TrialResult) -> None:
         if old.status == "error" or old.trace is None:
             store.save_trial(old.model_copy(update={"run_id": run_id}))
-            continue
+            return
         case = suite.case(old.case_id)
-        scores = await evaluate_all(EvalContext(case, old.trace, suite, judge))
+        async with sem:
+            scores = await evaluate_all(EvalContext(case, old.trace, suite, judge))
         passed, tags = verdict(scores, suite.config.gating_dimensions)
         store.save_trial(old.model_copy(update={
             "run_id": run_id, "scores": scores, "failure_tags": tags,
             "passed": passed and old.status == "scored"}))
+
+    await asyncio.gather(*(one(t) for t in trials))
     store.finish_run(run_id)
     return run_id

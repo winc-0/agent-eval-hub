@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from ..judge import JudgeRequest
+from ..llm import InfraError
 from ..models import Check, JudgeMeta, RubricItem
 from .base import EvalContext, dumps, judge_view, make_score
 
@@ -29,8 +30,15 @@ async def evaluate(ctx: EvalContext):
         rubric = rubric + [UNSUPPORTED_CLAIMS]
     dialogue, answer = judge_view(trace)
     tools = dumps([{"tool": c.name, "args": c.args, "result": c.result} for c in trace.tool_calls])
-    results = await asyncio.gather(*(ctx.judge.judge(JudgeRequest(item, answer, dialogue, tools))
-                                     for item in rubric))
+    try:
+        results = await asyncio.gather(*(ctx.judge.judge(JudgeRequest(item, answer, dialogue, tools))
+                                         for item in rubric))
+    except InfraError as e:
+        # 裁判调不通（额度用尽、限流、接口故障）不是被测模型的问题，也不该让这次试验的
+        # 其余结果作废：本维度标记为未评，门禁维度照常出结论，报告里单独计数。
+        score = make_score("quality", [], grader="llm")
+        score.reason = f"裁判不可用（{e.error_class}）：{str(e)[:120]}"
+        return score
     checks = []
     for item, res in zip(rubric, results):
         ok = res.verdict == "pass"

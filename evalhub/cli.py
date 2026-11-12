@@ -56,6 +56,8 @@ def print_summary(report: dict[str, Any]) -> None:
     print(f"延迟 P50 {e['latency_p50_ms'] / 1000:.2f}s / P95 {e['latency_p95_ms'] / 1000:.2f}s   "
           f"单次成本 {sym}{e['cost_per_trial_usd']:.4f}   裁判成本 {sym}{e['judge_cost_usd']:.4f}"
           f"（升级 {e['judge_escalated']}，待人工 {e['judge_needs_human']}）")
+    if e.get("judge_unavailable"):
+        print(f"⚠ 裁判有 {e['judge_unavailable']} 次调不通，这些试验的回答质量未评（门禁维度不受影响）。先确认裁判模型的额度和权限。")
     if report["failures"]:
         print("失败归因：" + "，".join(f"{f['tag']}×{f['trials']}" for f in report["failures"][:6]))
     b = report.get("baseline")

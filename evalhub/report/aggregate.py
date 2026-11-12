@@ -104,6 +104,8 @@ def build_report(store: Store, run_id: str, baseline_id: Optional[str] = None) -
         "judge_escalated": sum(s.judge.escalated for s in judge_scores),
         "judge_needs_human": sum(s.judge.needs_human for s in judge_scores),
         "judge_scored": len(judge_scores),
+        "judge_unavailable": sum(1 for t in scored for sc in t.scores
+                                 if sc.dimension == "quality" and sc.reason.startswith("裁判不可用")),
     }
 
     # ---- 失败归因 ----
