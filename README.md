@@ -1,5 +1,7 @@
 # Agent 评测中台（agent-eval-hub）
 
+[![agent-eval-gate](https://github.com/winc-0/agent-eval-hub/actions/workflows/eval-gate.yml/badge.svg)](https://github.com/winc-0/agent-eval-hub/actions/workflows/eval-gate.yml)
+
 给 LLM Agent 做持续评测的一套基础设施：用例集、沙箱、被测适配、7 维评估、分级裁判、调度引擎、双层报告、质量门禁、Badcase 闭环。
 
 它要回答四个问题：
@@ -280,12 +282,13 @@ tests/                 81 个离线测试
 
 ## 已验证与未验证
 
-已验证（本机实际运行）：
+已验证：
 - 81 个测试在两套环境下通过：anthropic 0.75 + openai 2.14（Claude 接入的 4 个测试因 SDK 过旧而跳过），以及 anthropic 2.8.0 + openai 3.49.0（全部运行）。
 - 离线全流程：体检、自检、v1/v2 评测、门禁拦截与放行、校准、Badcase 导入、OTel 导出、HTTP 服务与报告页面。
 - Claude 与 OpenAI 兼容两条接入路径：用官方 SDK 向本地假服务器发请求，核对了请求体（参数名、工具定义、缓存断点、thinking 块原样回传、工具结果合并在一条消息里）、响应解析、错误分类、SDK 不自行重试。
 - OpenAI 兼容接入跑过真实模型全量：阿里云百炼上的 DeepSeek-V4.1-Flash，33 条 × 3 次，结果见“真实模型上的结果”。
 - **LLM 裁判在真实模型上校准过**：24 条人工标注，测了两套分级组合——`qwen3.5-flash` + `qwen3.7-max`（一致率 95.8%、kappa 0.91）和 `qwen3.8-27b` + `qwen3.8-max-0902`（一致率 100%、kappa 1.00），升级率都是 4.2%、转人工 0。明细见上面“裁判分级”一节。
+- **CI 在 GitHub Actions 上真跑过**：Ubuntu + Python 3.12，81 个测试全过（只跳过 1 个读 Windows 注册表的），lint、自检、v1/v2 评测、门禁拦截与放行全部按预期执行，一次约 30 秒。
 
 未验证：
 - **重构后的 rubric 没有完整跑过真实裁判**：只判了 61/99 次，且新增的几条 rubric（`admits_unavailable`、`says_not_found`、`holds_the_line`、`acknowledges_cancel`、`no_unsupported_claims`）不在 24 条人工标注里，没有校准过。它们只做诊断、不进门禁，正是因为这个。
@@ -293,7 +296,6 @@ tests/                 81 个离线测试
 - **Claude 接入没有调用过真实接口**，只对本地假服务器验证了 SDK 层的格式。
 - 裁判只在这 24 条标注上校准过：样本量小，且覆盖的是电商客服这 6 条 rubric。换业务要重标 `human_labels.jsonl` 再跑一次 `calibrate`，不能直接搬这个 kappa。
 - LLM 用户模拟器（`--user-sim`）只用假模型测过对话流程，没有接真实模型扮演过用户。
-- `.github/workflows/eval-gate.yml` 只做了语法检查，没有在 GitHub Actions 上实际运行。
 - OTel 导出的属性名按 GenAI 语义约定书写，但该约定仍是 Development 状态且没有对照最新版逐项核对，接入具体后端前请比对。
 
 已知的简化：
