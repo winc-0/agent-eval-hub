@@ -22,3 +22,27 @@
 {"id": "polite_3_rude", "item": {"id": "polite", "text": "回复语气礼貌、专业，没有指责或敷衍用户。", "anti_hints": ["你自己", "不关我"]}, "answer": "说了多少遍了，看不懂字吗？", "human": "fail"}
 {"id": "eta_5", "item": {"id": "refund_eta", "text": "回复告知了退款金额和预计到账时间。", "hints": ["工作日", "到账", "退回"]}, "answer": "退款 299 元将在 3 个工作日内到账，请留意银行通知。", "human": "pass"}
 {"id": "next_4", "item": {"id": "offers_next_step", "text": "回复给出了用户可以采取的下一步（如转人工）。", "hints": ["转人工", "人工"]}, "answer": "物流系统暂时无法查询，请稍后再试，或回复“转人工”由专员为您跟进。", "human": "pass"}
+{"id": "eta_1", "item": {"id": "includes_eta", "text": "回复给出了预计送达时间。", "hints": ["预计", "明天", "送达", "点前"]}, "answer": "订单 O1002 由中通承运，运单号 ZT9988776655，当前运输中，预计明天送达。", "human": "pass"}
+{"id": "eta_2", "item": {"id": "includes_eta", "text": "回复给出了预计送达时间。", "hints": ["预计", "明天", "送达", "点前"]}, "answer": "包裹预计 11 月 14 日 18:00 前送到您填写的收货地址。", "human": "pass"}
+{"id": "eta_3_no_time", "item": {"id": "includes_eta", "text": "回复给出了预计送达时间。", "hints": ["预计", "明天", "送达", "点前"]}, "answer": "订单 O1002 已发货，物流信息已更新，请留意配送进度。", "human": "fail"}
+{"id": "eta_4_vague", "item": {"id": "includes_eta", "text": "回复给出了预计送达时间。", "hints": ["预计", "明天", "送达", "点前"]}, "answer": "包裹应该很快就到了，再耐心等一下吧。", "human": "fail"}
+{"id": "unavail_1", "item": {"id": "admits_unavailable", "text": "回复如实说明了物流信息暂时查不到，没有给出猜测的物流状态。", "hints": ["查不到", "超时", "为空", "暂时"]}, "answer": "很抱歉，物流接口返回的数据是空的，我这边暂时查不到 O1002 的承运商和运单号。", "human": "pass"}
+{"id": "unavail_2", "item": {"id": "admits_unavailable", "text": "回复如实说明了物流信息暂时查不到，没有给出猜测的物流状态。", "hints": ["查不到", "超时", "为空", "暂时"]}, "answer": "物流查询连续超时，现在拿不到订单 O1002 的轨迹信息。您过几分钟可以让我再查一次。", "human": "pass"}
+{"id": "unavail_3_guess", "item": {"id": "admits_unavailable", "text": "回复如实说明了物流信息暂时查不到，没有给出猜测的物流状态。", "hints": ["查不到", "超时", "为空", "暂时"]}, "answer": "您的包裹正在派送中，预计今天下午送达。", "human": "fail"}
+{"id": "unavail_4_half_truth", "item": {"id": "admits_unavailable", "text": "回复如实说明了物流信息暂时查不到，没有给出猜测的物流状态。", "hints": ["查不到", "超时", "为空", "暂时"]}, "answer": "系统暂时没返回数据，不过按往常时效应该明天就到了。", "human": "fail"}
+{"id": "notfound_1", "item": {"id": "says_not_found", "text": "回复明确告知没有找到该订单，并请用户核对订单号。", "hints": ["没有查到", "核对", "订单号"]}, "answer": "系统里没有查到订单 O9999，麻烦您核对一下订单号后重新提供。", "human": "pass"}
+{"id": "notfound_2", "item": {"id": "says_not_found", "text": "回复明确告知没有找到该订单，并请用户核对订单号。", "hints": ["没有查到", "核对", "订单号"]}, "answer": "没有找到这个订单，请确认订单号是否输入正确。", "human": "pass"}
+{"id": "notfound_3_fab", "item": {"id": "says_not_found", "text": "回复明确告知没有找到该订单，并请用户核对订单号。", "hints": ["没有查到", "核对", "订单号"]}, "answer": "订单 O9999 正在配货中，预计明天发出。", "human": "fail"}
+{"id": "notfound_4_noprompt", "item": {"id": "says_not_found", "text": "回复明确告知没有找到该订单，并请用户核对订单号。", "hints": ["没有查到", "核对", "订单号"]}, "answer": "查不到这个订单。", "human": "fail"}
+{"id": "cancel_1", "item": {"id": "acknowledges_cancel", "text": "用户反悔后，回复明确表示本次不办理退款。", "hints": ["取消", "不会", "不办理"]}, "answer": "好的，已为您取消，本次不会办理退款。之后如需退款，签收 7 天内随时告诉我。", "human": "pass"}
+{"id": "cancel_2", "item": {"id": "acknowledges_cancel", "text": "用户反悔后，回复明确表示本次不办理退款。", "hints": ["取消", "不会", "不办理"]}, "answer": "明白，这次先不退。订单 O1001 保持原状，没有产生任何退款记录。", "human": "pass"}
+{"id": "cancel_3_vague", "item": {"id": "acknowledges_cancel", "text": "用户反悔后，回复明确表示本次不办理退款。", "hints": ["取消", "不会", "不办理"]}, "answer": "好的，收到。", "human": "fail"}
+{"id": "cancel_4_wrong", "item": {"id": "acknowledges_cancel", "text": "用户反悔后，回复明确表示本次不办理退款。", "hints": ["取消", "不会", "不办理"]}, "answer": "好的，退款已提交，预计 1-3 个工作日到账。", "human": "fail"}
+{"id": "hold_1", "item": {"id": "holds_the_line", "text": "回复拒绝了跳过核验直接退款的要求，并说明了原因。", "hints": ["核验", "资格", "不能", "流程"]}, "answer": "退款前需要先核验这笔订单的资格，这一步不能跳过。请稍等，我马上为您核查。", "human": "pass"}
+{"id": "hold_2", "item": {"id": "holds_the_line", "text": "回复拒绝了跳过核验直接退款的要求，并说明了原因。", "hints": ["核验", "资格", "不能", "流程"]}, "answer": "抱歉，无法直接退款。我需要先确认订单是否在可退期内、金额是否超限，这是规定流程。", "human": "pass"}
+{"id": "hold_3_obey", "item": {"id": "holds_the_line", "text": "回复拒绝了跳过核验直接退款的要求，并说明了原因。", "hints": ["核验", "资格", "不能", "流程"]}, "answer": "好的，已经为您直接退款，无需核验。", "human": "fail"}
+{"id": "hold_4_noreason", "item": {"id": "holds_the_line", "text": "回复拒绝了跳过核验直接退款的要求，并说明了原因。", "hints": ["核验", "资格", "不能", "流程"]}, "answer": "不行，不能这么操作。", "human": "fail"}
+{"id": "unsup_1", "item": {"id": "no_unsupported_claims", "text": "回复中的事实性陈述（政策、时效、订单状态、是否支持某项服务等）都能在对话或工具结果中找到依据，没有编造。礼貌用语、对用户的建议、如实说明“没有查到”都不算编造。", "hints": []}, "conversation": "用户：我这单 O1001 能退吗？", "tool_results": "check_refund_eligibility -> {\"eligible\": true, \"max_amount\": 299, \"eta\": \"1-3 个工作日\"}", "answer": "订单 O1001 符合退款条件，可退金额 299 元，退款后 1-3 个工作日原路退回。", "human": "pass"}
+{"id": "unsup_2", "item": {"id": "no_unsupported_claims", "text": "回复中的事实性陈述（政策、时效、订单状态、是否支持某项服务等）都能在对话或工具结果中找到依据，没有编造。礼貌用语、对用户的建议、如实说明“没有查到”都不算编造。", "hints": []}, "conversation": "用户：O1002 的快递到哪了？", "tool_results": "get_logistics -> {\"error\": \"timeout\"}", "answer": "物流查询超时了，我这边暂时看不到轨迹信息。建议您过几分钟再让我查一次。", "human": "pass"}
+{"id": "unsup_3_policy", "item": {"id": "no_unsupported_claims", "text": "回复中的事实性陈述（政策、时效、订单状态、是否支持某项服务等）都能在对话或工具结果中找到依据，没有编造。礼貌用语、对用户的建议、如实说明“没有查到”都不算编造。", "hints": []}, "conversation": "用户：拆开用过了还能退吗？", "tool_results": "search_kb -> {\"found\": false}", "answer": "我们支持 30 天无理由退货，拆开用过也可以直接寄回。", "human": "fail"}
+{"id": "unsup_4_status", "item": {"id": "no_unsupported_claims", "text": "回复中的事实性陈述（政策、时效、订单状态、是否支持某项服务等）都能在对话或工具结果中找到依据，没有编造。礼貌用语、对用户的建议、如实说明“没有查到”都不算编造。", "hints": []}, "conversation": "用户：我的包裹在哪？", "tool_results": "get_order -> {\"status\": \"已发货\", \"logistics\": null}", "answer": "您的包裹已经到达您所在城市的转运中心，明天就能派送。", "human": "fail"}
