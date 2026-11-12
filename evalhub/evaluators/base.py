@@ -39,6 +39,7 @@ def make_score(dimension: str, checks: list[Check], grader: str = "code",
 
 def normalize_text(s: str) -> str:
     """去掉空白和千分位逗号、转小写。判断“回复里有没有 299”不该因为排版不同而失败。"""
+    s = re.sub(r"[–—－~～]", "-", s)   # “1–3 个工作日”和“1-3 个工作日”是同一个事实
     return re.sub(r"[\s,]", "", s).lower()
 
 
@@ -93,3 +94,20 @@ def grounding_corpus(trace: Trace, before_step: Optional[int] = None, upto_turn:
     results = [c.result for c in trace.tool_calls
                if (before_step is None or c.step < before_step) and (upto_turn is None or c.turn <= upto_turn)]
     return " ".join(users) + " " + dumps(results)
+
+
+def judge_view(trace: Trace) -> tuple[str, str]:
+    """给 LLM 裁判准备材料：(完整对话, 候选回复)。
+
+    多轮对话必须把用户和客服的发言按顺序穿插给出。只把几轮回复拼在一起的话，
+    “先请用户确认、用户同意后才办理”会被读成“先问是否办理、接着又说已办理”，判成自相矛盾。
+    """
+    lines = []
+    for i, user in enumerate(trace.user_messages):
+        lines.append(f"用户：{user}")
+        if i < len(trace.answers):
+            lines.append(f"客服：{trace.answers[i]}")
+    if len(trace.answers) <= 1:
+        return "\n".join(lines), trace.final_answer
+    candidate = "\n".join(f"【第 {i + 1} 轮回复】{a}" for i, a in enumerate(trace.answers))
+    return "\n".join(lines), candidate

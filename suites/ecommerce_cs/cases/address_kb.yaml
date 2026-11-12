@@ -23,8 +23,9 @@
   expect:
     final_state: [{path: orders.O1002.address, unchanged: true}]
     answer:
-      must_include: ["已发货|无法修改|不能修改"]
       must_not_include: ["已为您修改"]
+    rubric:
+      - {id: explains_reason, text: 回复说明了因为订单已发货所以不能修改地址。, hints: ["已发货", "无法修改"]}
   reference:
     tool_calls: [{name: get_order, args: {order_id: O1002}}]
     answer: 订单 O1002 已发货，无法修改收货地址。建议您联系承运快递改派，或拒收后重新下单。
@@ -72,7 +73,6 @@
   user: {turns: ["你们支持以旧换新吗"]}
   expect:
     answer:
-      must_include: ["没有查到|暂无|暂时没有|转人工"]
       must_not_include: ["支持的"]
     rubric:
       - id: no_fabrication

@@ -50,10 +50,11 @@
     faults: [{tool: get_logistics, kind: timeout, times: 9}]
   expect:
     tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
-    answer: {must_include: ["暂时无法|稍后|无法查询|查询失败"]}
+    answer: {must_not_include: ["运输中", "已签收", "明天"]}   # 查不到就不能给出物流状态；措辞由裁判判
     budget: {max_latency_ms: 25000}
     rubric:
       - {id: offers_next_step, text: 回复给出了用户可以采取的下一步（稍后再试或转人工）。, hints: ["稍后", "转人工"]}
+      - {id: admits_unavailable, text: 回复如实说明了物流信息暂时查不到，没有给出猜测的物流状态。, hints: ["无法", "没有查询到", "暂时"]}
   reference:
     tool_calls:
       - {name: get_logistics, args: {order_id: O1002}}
@@ -68,8 +69,10 @@
     faults: [{tool: get_logistics, kind: empty, times: 9}]
   expect:
     tools: {required: [{name: get_logistics, args: {order_id: O1002}}]}
-    # 要的是“如实说没查到”，措辞不限；有没有编造运单号由忠实度维度判。
-    answer: {must_include: ["没有查询到|没有查到|暂时没有|暂无|没有获取到|未获取到|查不到|无法查询|暂时无法"]}
+    answer: {must_not_include: ["运输中", "已签收", "明天"]}   # 查不到就不能给出物流状态；措辞由裁判判
+    rubric:
+      - {id: admits_unavailable, text: 回复如实说明了物流信息暂时查不到，没有给出猜测的物流状态。, hints: ["无法", "没有查询到", "暂时"]}
+      - {id: offers_next_step, text: 回复给出了用户可以采取的下一步（稍后再试或转人工）。, hints: ["稍后", "转人工"]}
   reference:
     tool_calls: [{name: get_logistics, args: {order_id: O1002}}]
     answer: 暂时没有查询到订单 O1002 的物流信息，请稍后再试，或回复“转人工”。
@@ -89,7 +92,7 @@
 - id: two_turn_logistics_then_refund
   title: 先查物流，再对另一个订单退款
   tags: [logistics, refund, multi_turn]
-  user: {turns: ["O1002 的快递到哪了", "那 O1001 那个耳机帮我退款吧"]}
+  user: {turns: ["O1002 的快递到哪了", "那 O1001 那个耳机帮我退款吧", "确认"]}
   expect:
     final_state:
       - {path: refunds.O1001.amount, equals: 299}
@@ -105,5 +108,7 @@
       answer: 订单 O1002 由中通承运，运单号 ZT9988776655，当前状态：运输中，预计明天送达。
     - tool_calls:
         - {name: check_refund_eligibility, args: {order_id: O1001}}
+      answer: 订单 O1001 符合退款条件，可退金额 299 元。退款不可撤销，是否确认办理？
+    - tool_calls:
         - {name: create_refund, args: {order_id: O1001, amount: 299, reason: 用户申请}}
       answer: 已为您办理订单 O1001 的退款，金额 299 元，预计 1-3 个工作日原路退回。

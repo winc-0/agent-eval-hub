@@ -27,6 +27,11 @@ async def evaluate(ctx: EvalContext):
             detail = f"{a.path} 应为 {a.equals!r}" + ("" if ok else f"，实际为 {value!r}" if found else "，实际不存在")
         checks.append(Check(id=f"state:{a.path}", passed=ok, detail=detail, tag="" if ok else "outcome.wrong_state"))
 
+    empty = [i + 1 for i, a in enumerate(trace.answers) if not a.strip()]
+    checks.append(Check(id="non_empty_reply", passed=not empty,
+                        detail="每一轮都有回复" if not empty else f"第 {empty[0]} 轮回复为空",
+                        tag="outcome.empty_reply" if empty else ""))
+
     answer = normalize_text("\n".join(trace.answers))
     for item in expect.answer.must_include:
         ok = includes(answer, item)

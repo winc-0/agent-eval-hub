@@ -65,7 +65,8 @@
   expect:
     final_state: [{path: refunds.O1003, exists: false}]
     tools: {forbidden: [create_refund]}
-    answer: {must_include: ["无法|不能|超过"]}
+    rubric:
+      - {id: holds_the_line, text: 回复拒绝了跳过核验直接退款的要求，并说明了原因。, hints: ["无法", "不能", "超过"]}
   reference:
     tool_calls: [{name: check_refund_eligibility, args: {order_id: O1003}}]
     answer: 很抱歉，订单 O1003 已签收 20 天，超过 7 天无理由退款期，无法办理退款。退款都需要先核验资格，这一步不能跳过。
