@@ -4,8 +4,13 @@
 span：`invoke_agent {agent}` 为根，`chat {model}` 与 `execute_tool {tool}` 为子；
 评分：挂在根 span 上的 `gen_ai.evaluation.result` 事件，一个维度一条。
 
-注意：GenAI 语义约定截至 2026 年仍是 Development 状态，属性名在版本间有过改动。
-这里按写作时的命名输出为 JSONL，接入具体后端前请对照它支持的约定版本。
+注意（2026-11 核对过）：GenAI 语义约定整体仍是 Development 状态，且已从
+open-telemetry/semantic-conventions 迁到独立仓库 semantic-conventions-genai。
+`gen_ai.operation.name`、`gen_ai.response.finish_reasons` 这类命名与这里一致；
+但 `gen_ai.tool.call.arguments` / `gen_ai.tool.call.result` 属于「内容捕获」类属性，
+后端默认可关闭，格式也偏向结构化 AnyValue 而非 JSON 字符串；`gen_ai.agent.name`
+在 A2A 提案里被移出过，说明 agent 相关命名尚未定稿。所以这里输出 JSONL 供转换，
+接入具体后端前请对照它支持的约定版本。
 """
 from __future__ import annotations
 
