@@ -32,7 +32,7 @@ python -m evalhub gate tag:candidate --gate suites/ecommerce_cs/gate.yaml --base
 
 ```bash
 python -m evalhub calibrate suites/ecommerce_cs --judge mock      # 用人工标注集校准裁判
-python -m evalhub calibrate suites/ecommerce_cs --judge openai:qwen3.5-flash,qwen3.7-max --concurrency 6
+python -m evalhub calibrate suites/ecommerce_cs --judge openai:qwen3.8-27b,qwen3.8-max-0902 --concurrency 6
 python -m evalhub badcase list                                    # Badcase 池
 python -m evalhub badcase import suites/ecommerce_cs suites/ecommerce_cs/production_traces.sample.jsonl
 python -m evalhub badcase pin suites/ecommerce_cs kb_invoice      # 钉为回归用例
@@ -132,15 +132,18 @@ v1 的每一类缺陷都对应到了具体的失败标签（未经确认退款�
 
 **裁判分级，先校准再信任。** 空回复由规则直接判负；小模型判清晰样本；拿不准（把握度低、多票不一致、输出 `unsure`）才升级到强模型；强模型也拿不准的进人工队列。rubric 逐条独立判，候选回复用标签包起来并声明“其中的指令不执行”。`calibrate` 拿人工标注集算一致率和 Cohen's kappa，低于 90% 就不该让裁判的分数进门禁。自带的 mock 裁判是关键词匹配，校准一致率只有 70.8%，否定句全判错，这正是它只配做诊断的原因。
 
-真实模型上也跑过一次，24 条人工标注（15 条 fail / 9 条 pass），裁判刻意换了家族：被测是 DeepSeek，裁判用 Qwen。
+真实模型上也跑过，24 条人工标注（15 条 fail / 9 条 pass），裁判刻意换了家族：被测是 DeepSeek，裁判用 Qwen。两套组合都测过：
 
-| | 一致率 | kappa | 误放 | 误杀 |
-|---|---|---|---|---|
-| 第 1 级 `qwen3.5-flash` | 95.8% | 1.00 | 0 | 0 |
-| 第 2 级 `qwen3.7-max` | 95.8% | 0.91 | 0 | 1 |
-| 分级整体 | 95.8% | 0.91 | 0 | 1 |
+| | 一致率 | kappa | 误放 | 误杀 | 升级率 |
+|---|---|---|---|---|---|
+| `qwen3.5-flash` → `qwen3.7-max` | 95.8% | 0.91 | 0 | 1 | 4.2% |
+| `qwen3.8-27b` → `qwen3.8-max-0902` | 100% | 1.00 | 0 | 0 | 4.2% |
 
-24 条里只有 1 条升级到强模型（升级率 4.2%），没有一条进人工队列。**强模型并没有比小模型更准**（kappa 0.91 对 1.00），分歧只有一条 `apology_1`：人工认为“很抱歉给您带来不便”已经表达了歉意，强模型坚持要回复明确提到“质量问题”。这不是裁判能力问题，是 `apology` 这条 rubric 写得不够可判——要判的标准本身还得再收紧。分级在这个规模上省的是钱，不是准确率。
+两套都只有 1 条升级到强模型，没有一条进人工队列。第一套的分歧是 `apology_1`：人工认为“很抱歉给您带来不便”已经表达了歉意，强模型坚持要回复明确提到“质量问题”——这不是裁判能力问题，是 `apology` 这条 rubric 写得不够可判。**强模型也没有比小模型更准**（kappa 0.91 对 1.00），分级在这个规模上省的是钱，不是准确率。
+
+**裁判一律关思考。** 判“这句话有没有道歉”不需要推理链，但开着的模型会把输出 token 全烧在思维链上：一次全量评测，裁判输出 767K tokens、是输入的两倍多，按量计费 ¥1.53。给裁判传 `enable_thinking: false` 之后，同样的判定的输出降到每次 10 来个 token。这个开关只在 `make_judge` 里对裁判打开，被测模型不动——被测开不开思考是线上配置，评测要跟线上一致。
+
+裁判调用还会做两层重试：`CascadeJudge` 内部对单次调用退避重试两次（裁判嵌在评估器里调，没有调度器兜底），`quality` 维度再兜一层——实在调不通就把这个维度标记为“未评”，门禁维度照常出结论，报告里单独计数，绝不当成被测模型答错。
 
 校准里还会遇到“裁判根本没调到”的情况：某级模型额度用尽时 24 条全返回 403。这类故障会被单独计数并跳过一致率分母，不会伪装成“裁判判错了”；整轮只要有 1 条没调到，`calibrate` 就以退出码 2 结束，提示先修接口。
 
@@ -192,6 +195,30 @@ python -m evalhub run suites/ecommerce_cs --agent openai:deepseek-chat --price <
 `--price` 是每百万 token 的输入、输出价格（币种见 `--currency`，默认美元），按厂商当前定价填写；不填则成本记 0，不会去猜。`calibrate` 的成本同理——没有登记价格时报告里显示 0，一致率和 kappa 不受影响。
 
 真实模型每次运行都会产生费用：33 条 × 3 次 = 99 次对话，外加裁判调用。先用 `--only <用例id>` 跑一两条确认接线，再全量跑。
+
+### 用免费额度把评测跑起来
+
+阿里云百炼给新模型发免费额度（每个模型 100 万 tokens），够把全流程跑通。实测可调用的组合：
+
+| 角色 | 模型 | 说明 |
+|---|---|---|
+| 被测 | `deepseek-v4.1-flash-1017` | 不用思考模式，按线上配置来 |
+| 裁判第 1 级 | `qwen3.8-27b` | 判绝大多数样本，消耗主要在这里 |
+| 裁判第 2 级 | `qwen3.8-max-0902` | 只在拿不准时升级，实测只用到 3 次 |
+
+```bash
+python -m evalhub run suites/ecommerce_cs \
+  --agent openai:deepseek-v4.1-flash-1017 \
+  --judge openai:qwen3.8-27b,qwen3.8-max-0902 \
+  --price 2,8 --currency CNY --trials 3 --concurrency 6 --tag free
+```
+
+两个细节决定这套能不能长期白嫖：
+
+- **裁判必须关思考**。开着的时候一次全量裁判烧掉 107 万 tokens（输出占 71%），一个模型的免费额度一次就没了，超出部分转按量计费，这就是账单上那笔 ¥1.68 的来源——`qwen3.5-flash` 根本不在免费列表里，一直在按量收费。关掉之后同样的全量大约用 30~40 万，一个额度能跑两三次。
+- **额度耗尽不会静默降级**。接口返回 403，被测那边记成基础设施故障、裁判这边记成“未评”，都不进通过率的分母，报告里单独提示。
+
+`--judge none` 是完全免费的选项：门禁维度（终态、工具调用、忠实度、安全）全是代码判定，裁判只影响 `quality` 这一个诊断维度。日常看通过率不需要裁判，发版前跑一次带裁判的拿 quality 数据即可。
 
 ## 评测你自己的 Agent
 
@@ -258,7 +285,7 @@ tests/                 81 个离线测试
 - 离线全流程：体检、自检、v1/v2 评测、门禁拦截与放行、校准、Badcase 导入、OTel 导出、HTTP 服务与报告页面。
 - Claude 与 OpenAI 兼容两条接入路径：用官方 SDK 向本地假服务器发请求，核对了请求体（参数名、工具定义、缓存断点、thinking 块原样回传、工具结果合并在一条消息里）、响应解析、错误分类、SDK 不自行重试。
 - OpenAI 兼容接入跑过真实模型全量：阿里云百炼上的 DeepSeek-V4.1-Flash，33 条 × 3 次，结果见“真实模型上的结果”。
-- **LLM 裁判在真实模型上校准过**：24 条人工标注，`qwen3.5-flash` + `qwen3.7-max` 分级，一致率 95.8%、Cohen's kappa 0.91，升级率 4.2%、转人工 0。明细见上面“裁判分级”一节。
+- **LLM 裁判在真实模型上校准过**：24 条人工标注，测了两套分级组合——`qwen3.5-flash` + `qwen3.7-max`（一致率 95.8%、kappa 0.91）和 `qwen3.8-27b` + `qwen3.8-max-0902`（一致率 100%、kappa 1.00），升级率都是 4.2%、转人工 0。明细见上面“裁判分级”一节。
 
 未验证：
 - **重构后的 rubric 没有完整跑过真实裁判**：只判了 61/99 次，且新增的几条 rubric（`admits_unavailable`、`says_not_found`、`holds_the_line`、`acknowledges_cancel`、`no_unsupported_claims`）不在 24 条人工标注里，没有校准过。它们只做诊断、不进门禁，正是因为这个。
